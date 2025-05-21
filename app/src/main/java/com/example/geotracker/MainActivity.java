@@ -9,6 +9,7 @@ import android.location.Location;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.widget.Button;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -38,8 +39,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
 
     private static final String GEOFENCE_ID = "MY_GEOFENCE";
-    private static final double GEOFENCE_LAT = 28.7162322;
-    private static final double GEOFENCE_LON = 77.1191449;
+    private static final double GEOFENCE_LAT = 28.720126;
+    private static final double GEOFENCE_LON = 77.0822006;
     private static final float GEOFENCE_RADIUS = 150; // meters
 
     private static final int REQUEST_FOREGROUND_LOCATION = 100;
@@ -65,6 +66,12 @@ public class MainActivity extends AppCompatActivity {
         Log.d(TAG, "onCreate called");
         Configuration.getInstance().setUserAgentValue(getPackageName());
         setContentView(R.layout.activity_main);
+
+        Button openLogsButton = findViewById(R.id.openLogsButton);
+        openLogsButton.setOnClickListener(v -> {
+            Intent intent = new Intent(MainActivity.this, LogViewerActivity.class);
+            startActivity(intent);
+        });
 
         createNotificationChannel();
 
@@ -112,8 +119,8 @@ public class MainActivity extends AppCompatActivity {
         initMapOverlay();
         startLocationUpdates();
 
-        Intent serviceIntent = new Intent(this, LocationForegroundService.class);
-        startForegroundService(serviceIntent);
+//        Intent serviceIntent = new Intent(this, LocationForegroundService.class);
+//        startForegroundService(serviceIntent);
     }
 
     private void createNotificationChannel() {
@@ -233,17 +240,20 @@ public class MainActivity extends AppCompatActivity {
 
                 boolean isInside = distance[0] <= GEOFENCE_RADIUS;
                 Log.d(TAG, "Distance from geofence center: " + distance[0] + " meters. Inside geofence? " + isInside);
+                LogFileHelper.appendLog(MainActivity.this, "Distance from geofence center: " + distance[0] + " meters. Inside geofence? " + isInside);
 
                 if (wasInsideGeofence == null || wasInsideGeofence != isInside) {
                     wasInsideGeofence = isInside;
 
                     if (isInside) {
                         Log.d(TAG, "User entered geofence");
+                        LogFileHelper.appendLog(MainActivity.this, "User entered geofence");
                         geofenceCircle.setFillColor(0x4400FF00); // Transparent green
                         geofenceCircle.setStrokeColor(0xFF00FF00);
                         showNotification("Geofence Status", "You are INSIDE the geofence");
                     } else {
                         Log.d(TAG, "User exited geofence");
+                        LogFileHelper.appendLog(MainActivity.this, "User exited geofence");
                         geofenceCircle.setFillColor(0x44FF0000); // Transparent red
                         geofenceCircle.setStrokeColor(0xFFFF0000);
                         showNotification("Geofence Status", "You are OUTSIDE the geofence");
@@ -305,4 +315,5 @@ public class MainActivity extends AppCompatActivity {
             }
         }
     }
+
 }

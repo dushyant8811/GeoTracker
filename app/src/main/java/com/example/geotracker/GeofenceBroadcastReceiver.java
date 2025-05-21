@@ -12,8 +12,16 @@ import java.util.List;
 
 public class GeofenceBroadcastReceiver extends BroadcastReceiver {
 
+    private static final String TAG = "GeofenceReceiver";
+
     @Override
     public void onReceive(Context context, Intent intent) {
+
+        Log.d(TAG, "Geofence event received");
+        LogFileHelper.appendLog(context, "Geofence event received");
+
+
+
         GeofencingEvent geofencingEvent = GeofencingEvent.fromIntent(intent);
 
         if (geofencingEvent == null) {
@@ -39,15 +47,18 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
         switch (transitionType) {
             case Geofence.GEOFENCE_TRANSITION_ENTER:
                 transitionMessage = "Checked In ✅";
+                Log.d(TAG, "GEOFENCE_TRANSITION_ENTER detected");
+                LogFileHelper.appendLog(context, "GEOFENCE_TRANSITION_ENTER detected");
+
                 break;
             case Geofence.GEOFENCE_TRANSITION_EXIT:
                 transitionMessage = "Checked Out ❌";
-                break;
-            case Geofence.GEOFENCE_TRANSITION_DWELL:
-                transitionMessage = "Dwelling inside geofence";
+                Log.d(TAG, "GEOFENCE_TRANSITION_EXIT detected");
+                LogFileHelper.appendLog(context, "GEOFENCE_TRANSITION_EXIT detected");
                 break;
             default:
                 transitionMessage = "Unknown transition";
+                Log.w(TAG, "Unknown geofence transition: " + transitionType);
         }
 
         for (Geofence geofence : triggeringGeofences) {
