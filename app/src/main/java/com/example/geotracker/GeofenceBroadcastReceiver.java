@@ -1,70 +1,92 @@
 package com.example.geotracker;
+
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.util.Log;
 import android.widget.Toast;
 
 import com.google.android.gms.location.Geofence;
 import com.google.android.gms.location.GeofencingEvent;
 
-import java.util.List;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 public class GeofenceBroadcastReceiver extends BroadcastReceiver {
 
     private static final String TAG = "GeofenceReceiver";
+    private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
 
     @Override
     public void onReceive(Context context, Intent intent) {
-
         Log.d(TAG, "Geofence event received");
         LogFileHelper.appendLog(context, "Geofence event received");
 
-
-
-        GeofencingEvent geofencingEvent = GeofencingEvent.fromIntent(intent);
-
-        if (geofencingEvent == null) {
-            Log.e("GEOFENCE", "GeofencingEvent is null");
+        GeofencingEvent event = GeofencingEvent.fromIntent(intent);
+        if (event == null) {
+            Log.e(TAG, "Null GeofencingEvent");
             return;
         }
 
-        if (geofencingEvent.hasError()) {
-            Log.e("GEOFENCE", "Geofencing error: " + geofencingEvent.getErrorCode());
+        if (event.hasError()) {
+            Log.e(TAG, "Geofencing error: " + event.getErrorCode());
             return;
         }
 
-        List<Geofence> triggeringGeofences = geofencingEvent.getTriggeringGeofences();
-        if (triggeringGeofences == null || triggeringGeofences.isEmpty()) {
-            Log.w("GEOFENCE", "No triggering geofences");
-            return;
-        }
+        int transition = event.getGeofenceTransition();
+        String transitionType = getTransitionString(transition);
+        String time = sdf.format(new Date());
 
-        int transitionType = geofencingEvent.getGeofenceTransition();
+        SharedPreferences prefs = context.getSharedPreferences("GeofencePrefs", Context.MODE_PRIVATE);
+        SharedPreferences.Editor editor = prefs.edit();
 
-        String transitionMessage;
-
-        switch (transitionType) {
+        switch (transition) {
             case Geofence.GEOFENCE_TRANSITION_ENTER:
-                transitionMessage = "Checked In ✅";
-                Log.d(TAG, "GEOFENCE_TRANSITION_ENTER detected");
-                LogFileHelper.appendLog(context, "GEOFENCE_TRANSITION_ENTER detected");
+                editor.putString("checkInTime", time);
+                editor.remove("checkOutTime");
+                LogFileHelper.appendLog(context, "Check-in at " + time);
+
+                // Start the foreground service
+                Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    context.startForegroundService(startServiceIntent);
+                } else {
+                    context.startService(startServiceIntent);
+                }
 
                 break;
             case Geofence.GEOFENCE_TRANSITION_EXIT:
-                transitionMessage = "Checked Out ❌";
-                Log.d(TAG, "GEOFENCE_TRANSITION_EXIT detected");
-                LogFileHelper.appendLog(context, "GEOFENCE_TRANSITION_EXIT detected");
+                editor.putString("checkOutTime", time);
+                LogFileHelper.appendLog(context, "Check-out at " + time);
+
+                // Stop the foreground service
+                Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
+                context.stopService(stopServiceIntent);
                 break;
             default:
-                transitionMessage = "Unknown transition";
-                Log.w(TAG, "Unknown geofence transition: " + transitionType);
+                LogFileHelper.appendLog(context, "Unknown transition: " + transition);
         }
+        editor.apply();
 
-        for (Geofence geofence : triggeringGeofences) {
-            String id = geofence.getRequestId();
-            Log.d("GEOFENCE", "ID: " + id + ", Event: " + transitionMessage);
-            Toast.makeText(context, transitionMessage, Toast.LENGTH_LONG).show();
+        // Update UI
+        context.sendBroadcast(new Intent("com.example.geotracker.UPDATE_UI"));
+
+        // Show notification
+        String message = transition == Geofence.GEOFENCE_TRANSITION_ENTER ?
+                "Checked In ✅" : "Checked Out ❌";
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show();
+    }
+
+    private String getTransitionString(int transitionType) {
+        switch (transitionType) {
+            case Geofence.GEOFENCE_TRANSITION_ENTER:
+                return "ENTER";
+            case Geofence.GEOFENCE_TRANSITION_EXIT:
+                return "EXIT";
+            default:
+                return "UNKNOWN";
         }
     }
 }

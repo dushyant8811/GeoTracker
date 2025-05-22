@@ -1,25 +1,30 @@
 package com.example.geotracker;
 
 import android.content.Context;
+import android.os.Environment;
+import android.util.Log;
+
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 public class LogFileHelper {
+    private static final String TAG = "LogFileHelper";
 
-    private static final String LOG_FILE_NAME = "geofence_logs.txt";
-
-    // Append log text with timestamp to internal storage file
     public static void appendLog(Context context, String text) {
-        try (FileOutputStream fos = context.openFileOutput(LOG_FILE_NAME, Context.MODE_APPEND)) {
-            String logEntry = System.currentTimeMillis() + ": " + text + "\n";
-            fos.write(logEntry.getBytes());
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
+        try {
+            File logFile = new File(context.getExternalFilesDir(null), "geofence_logs.txt");
+            String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date());
+            String logEntry = timestamp + " - " + text + "\n";
 
-    // Optional method to clear logs (delete the log file)
-    public static void clearLog(Context context) {
-        context.deleteFile(LOG_FILE_NAME);
+            FileOutputStream fos = new FileOutputStream(logFile, true);
+            fos.write(logEntry.getBytes());
+            fos.close();
+        } catch (IOException e) {
+            Log.e(TAG, "Error writing to log file", e);
+        }
     }
 }
