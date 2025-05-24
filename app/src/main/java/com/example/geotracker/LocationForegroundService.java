@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.os.Build;
@@ -27,13 +28,18 @@ public class LocationForegroundService extends Service {
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
 
+    // Add these at the top of the class (change from private to public)
+    public static final String ACTION_START_TRACKING = "com.example.geotracker.START_TRACKING";
+    public static final String ACTION_STOP_TRACKING = "com.example.geotracker.STOP_TRACKING";
+
+
     @Override
     public void onCreate() {
         super.onCreate();
         Log.d(TAG, "Service onCreate called");
 
         createNotificationChannel();
-        startForeground(NOTIFICATION_ID, getNotification());
+        startForeground(NOTIFICATION_ID, NotificationHelper.getForegroundNotification(this));
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
@@ -91,13 +97,31 @@ public class LocationForegroundService extends Service {
     }
 
     private Notification getNotification() {
+        SharedPreferences prefs = getSharedPreferences("GeofencePrefs", MODE_PRIVATE);
+        String checkInTime = prefs.getString("checkInTime", "Not checked in");
+
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("GeoTracker is running")
-                .setContentText("Tracking location for attendance")
-                .setSmallIcon(R.drawable.ic_launcher_foreground) // Use actual icon
+                .setContentTitle("GeoTracker Active")
+                .setContentText("Tracking since: " + checkInTime)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setOngoing(true)
                 .build();
     }
+
+    private void updateNotification(String text) {
+        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("GeoTracker Update")
+                .setContentText(text)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setAutoCancel(true)
+                .build();
+
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (manager != null) {
+            manager.notify(NOTIFICATION_ID + 1, notification);
+        }
+    }
+
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

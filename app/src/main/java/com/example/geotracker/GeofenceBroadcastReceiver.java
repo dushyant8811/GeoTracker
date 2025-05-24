@@ -4,8 +4,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.util.Log;
-import android.widget.Toast;
 
 import com.google.android.gms.location.Geofence;
 import com.google.android.gms.location.GeofencingEvent;
@@ -24,6 +24,17 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
         Log.d(TAG, "Geofence event received");
         LogFileHelper.appendLog(context, "Geofence event received");
 
+        if (intent == null) {
+            Log.e(TAG, "Received null intent");
+            return;
+        }
+
+        // Handle manual check-in request
+        if ("MANUAL_CHECK_IN".equals(intent.getAction())) {
+            handleManualCheckIn(context);
+            return;
+        }
+
         GeofencingEvent event = GeofencingEvent.fromIntent(intent);
         if (event == null) {
             Log.e(TAG, "Null GeofencingEvent");
@@ -36,57 +47,119 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
         }
 
         int transition = event.getGeofenceTransition();
-        String transitionType = getTransitionString(transition);
         String time = sdf.format(new Date());
-
         SharedPreferences prefs = context.getSharedPreferences("GeofencePrefs", Context.MODE_PRIVATE);
         SharedPreferences.Editor editor = prefs.edit();
 
         switch (transition) {
             case Geofence.GEOFENCE_TRANSITION_ENTER:
-                editor.putString("checkInTime", time);
-                editor.remove("checkOutTime");
-                LogFileHelper.appendLog(context, "Check-in at " + time);
+                String existingCheckIn = prefs.getString("checkInTime", "N/A");
+                String existingCheckOut = prefs.getString("checkOutTime", "N/A");
 
-                // Start the foreground service
-                Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    context.startForegroundService(startServiceIntent);
-                } else {
-                    context.startService(startServiceIntent);
+                if (existingCheckIn.equals("N/A") || !existingCheckOut.equals("N/A")) {
+                    editor.putString("checkInTime", time);
+                    editor.remove("checkOutTime");
+                    LogFileHelper.appendLog(context, "Check-in at " + time);
+                    Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(startServiceIntent);
+                    } else {
+                        context.startService(startServiceIntent);
+                    }
+
+                    NotificationHelper.sendNotification(context,
+                            "Geofence Entered",
+                            "You entered the geofence at " + time);
                 }
-
+                handleEnterTransition(context, editor, time);
                 break;
+
             case Geofence.GEOFENCE_TRANSITION_EXIT:
-                editor.putString("checkOutTime", time);
-                LogFileHelper.appendLog(context, "Check-out at " + time);
-
-                // Stop the foreground service
-                Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
-                context.stopService(stopServiceIntent);
+                handleExitTransition(context, editor, time);
                 break;
+
             default:
                 LogFileHelper.appendLog(context, "Unknown transition: " + transition);
+                NotificationHelper.sendNotification(context,
+                        "Geofence Alert",
+                        "Unknown geofence transition detected at " + time);
         }
+
         editor.apply();
-
-        // Update UI
         context.sendBroadcast(new Intent("com.example.geotracker.UPDATE_UI"));
-
-        // Show notification
-        String message = transition == Geofence.GEOFENCE_TRANSITION_ENTER ?
-                "Checked In ✅" : "Checked Out ❌";
-        Toast.makeText(context, message, Toast.LENGTH_LONG).show();
     }
 
-    private String getTransitionString(int transitionType) {
-        switch (transitionType) {
-            case Geofence.GEOFENCE_TRANSITION_ENTER:
-                return "ENTER";
-            case Geofence.GEOFENCE_TRANSITION_EXIT:
-                return "EXIT";
-            default:
-                return "UNKNOWN";
+    private void handleManualCheckIn(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences("GeofencePrefs", Context.MODE_PRIVATE);
+        String checkInTime = prefs.getString("checkInTime", "N/A");
+        String checkOutTime = prefs.getString("checkOutTime", "N/A");
+
+        if (checkInTime.equals("N/A") || !checkOutTime.equals("N/A")) {
+            String time = sdf.format(new Date());
+            SharedPreferences.Editor editor = prefs.edit();
+            editor.putString("checkInTime", time);
+            editor.remove("checkOutTime");
+            editor.apply();
+
+            // Start foreground service
+            Intent serviceIntent = new Intent(context, LocationForegroundService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent);
+            } else {
+                context.startService(serviceIntent);
+            }
+
+            NotificationHelper.sendNotification(context,
+                    "Manual Check-In",
+                    "You were already inside the geofence at " + time);
         }
+    }
+
+    private void handleEnterTransition(Context context, SharedPreferences.Editor editor, String time) {
+        String existingCheckOut = context.getSharedPreferences("GeofencePrefs", Context.MODE_PRIVATE)
+                .getString("checkOutTime", "N/A");
+
+        if (existingCheckOut.equals("N/A")) {
+            // Already inside, no need to update
+            return;
+        }
+
+        editor.putString("checkInTime", time);
+        editor.remove("checkOutTime");
+        LogFileHelper.appendLog(context, "Check-in at " + time);
+
+        // Start foreground service
+        Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(startServiceIntent);
+        } else {
+            context.startService(startServiceIntent);
+        }
+
+        NotificationHelper.sendNotification(context,
+                "Geofence Entered",
+                "You entered the geofence at " + time);
+    }
+
+    private void handleExitTransition(Context context, SharedPreferences.Editor editor, String time) {
+        String existingCheckIn = context.getSharedPreferences("GeofencePrefs", Context.MODE_PRIVATE)
+                .getString("checkInTime", "N/A");
+
+        if (existingCheckIn.equals("N/A")) {
+            // Wasn't checked in, ignore exit
+            return;
+        }
+
+        editor.putString("checkOutTime", time);
+        LogFileHelper.appendLog(context, "Check-out at " + time);
+
+        // Stop foreground service
+        Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
+        context.stopService(stopServiceIntent);
+
+        NotificationHelper.sendNotification(context,
+                "Geofence Exited",
+                "You exited the geofence at " + time);
     }
 }

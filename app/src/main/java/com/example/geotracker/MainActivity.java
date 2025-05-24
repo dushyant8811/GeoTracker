@@ -66,6 +66,8 @@ public class MainActivity extends AppCompatActivity {
     private TextView checkOutTimeTextView;
     private BroadcastReceiver geofenceUpdateReceiver;
 
+    private boolean isReceiverRegistered = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -94,6 +96,7 @@ public class MainActivity extends AppCompatActivity {
         createLocationRequest();
         createLocationCallback();
         checkPermissionsAndStart();
+
     }
 
     private void addGeofence() {
@@ -115,9 +118,21 @@ public class MainActivity extends AppCompatActivity {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE
         );
 
+        if (GeofenceHelper.isGeofenceAlreadyAdded(this)) {
+            Log.d(TAG, "Geofence already exists, skipping add.");
+            return;
+        }
+
+
+
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             geofencingClient.addGeofences(request, pendingIntent)
-                    .addOnSuccessListener(aVoid -> Toast.makeText(this, "Geofence added", Toast.LENGTH_SHORT).show())
+                    .addOnSuccessListener(aVoid -> {
+                        GeofenceHelper.saveGeofenceToPrefs(this, GEOFENCE_ID,
+                                (float) GEOFENCE_LAT, (float) GEOFENCE_LON, GEOFENCE_RADIUS);
+                        Log.d(TAG, "Geofence added silently");
+                    })
+
                     .addOnFailureListener(e -> {
                         Log.e(TAG, "Geofence addition failed", e);
                         Toast.makeText(this, "Geofence setup failed", Toast.LENGTH_SHORT).show();
@@ -149,17 +164,19 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void registerGeofenceUpdateReceiver() {
-        geofenceUpdateReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                updateUI();
-            }
-        };
-
-        // Register the receiver with the correct intent filter
-        IntentFilter filter = new IntentFilter("com.example.geotracker.UPDATE_UI");
-        registerReceiver(geofenceUpdateReceiver, filter);
+        if (!isReceiverRegistered) {
+            geofenceUpdateReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    updateUI();
+                }
+            };
+            IntentFilter filter = new IntentFilter("com.example.geotracker.UPDATE_UI");
+            registerReceiver(geofenceUpdateReceiver, filter);
+            isReceiverRegistered = true;
+        }
     }
+
     private void updateUI() {
         SharedPreferences prefs = getSharedPreferences("GeofencePrefs", MODE_PRIVATE);
         String checkInTime = prefs.getString("checkInTime", "N/A");
@@ -236,11 +253,18 @@ public class MainActivity extends AppCompatActivity {
                     REQUEST_BACKGROUND_LOCATION);
         } else {
             startAppFeatures();
+            checkInitialState();
         }
     }
 
     private void startAppFeatures() {
-        addGeofence();
+        if (!GeofenceHelper.isGeofenceAlreadyAdded(this)) {
+            addGeofence();
+        } else {
+            Log.d(TAG, "Geofence already exists, skipping add.");
+        }
+
+
         initMapOverlay();
         startLocationUpdates();
         updateUI();
@@ -273,9 +297,18 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        unregisterReceiver(geofenceUpdateReceiver);
+        if (isReceiverRegistered) {
+            try {
+                unregisterReceiver(geofenceUpdateReceiver);
+                isReceiverRegistered = false;
+            } catch (IllegalArgumentException e) {
+                Log.w(TAG, "Receiver not registered");
+            }
+        }
         stopLocationUpdates();
     }
+
+
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
@@ -293,6 +326,35 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "Background location recommended for full functionality", Toast.LENGTH_LONG).show();
                 startAppFeatures();
             }
+        }
+    }
+
+    private void checkInitialState() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED) {
+
+            fusedLocationClient.getLastLocation().addOnSuccessListener(location -> {
+                if (location != null) {
+                    float[] results = new float[1];
+                    Location.distanceBetween(
+                            location.getLatitude(), location.getLongitude(),
+                            GEOFENCE_LAT, GEOFENCE_LON, results
+                    );
+
+                    if (results[0] <= GEOFENCE_RADIUS) {
+                        SharedPreferences prefs = getSharedPreferences("GeofencePrefs", MODE_PRIVATE);
+                        String checkInTime = prefs.getString("checkInTime", "N/A");
+                        String checkOutTime = prefs.getString("checkOutTime", "N/A");
+
+                        if (checkInTime.equals("N/A") || !checkOutTime.equals("N/A")) {
+                            // Trigger manual check-in
+                            Intent intent = new Intent(this, GeofenceBroadcastReceiver.class);
+                            intent.setAction("MANUAL_CHECK_IN");
+                            sendBroadcast(intent);
+                        }
+                    }
+                }
+            });
         }
     }
 }
