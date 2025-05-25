@@ -8,17 +8,24 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
+import android.graphics.drawable.Drawable;
 import android.location.Location;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.animation.Animation;
 import android.widget.Button;
+import android.widget.ImageButton;  // Replace Button import
 import android.widget.TextView;
 import android.widget.Toast;
+import android.view.animation.AnimationUtils;
 
+import androidx.annotation.DrawableRes;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.Geofence;
@@ -40,6 +47,7 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -50,6 +58,8 @@ public class MainActivity extends AppCompatActivity {
     private static final float GEOFENCE_RADIUS = 150;
     private static final int REQUEST_FOREGROUND_LOCATION = 100;
     private static final int REQUEST_BACKGROUND_LOCATION = 101;
+
+    private static final int REQUEST_WIFI_PERMISSION = 102;
 
     // Location components
     private FusedLocationProviderClient fusedLocationClient;
@@ -79,9 +89,6 @@ public class MainActivity extends AppCompatActivity {
         checkInTimeTextView = findViewById(R.id.checkInTimeTextView);
         checkOutTimeTextView = findViewById(R.id.checkOutTimeTextView);
 
-        Button openLogsButton = findViewById(R.id.openLogsButton);
-        openLogsButton.setOnClickListener(v -> startActivity(new Intent(this, LogViewerActivity.class)));
-
         // Map setup
         mapView = findViewById(R.id.mapView);
         mapView.setTileSource(TileSourceFactory.MAPNIK);
@@ -96,7 +103,34 @@ public class MainActivity extends AppCompatActivity {
         createLocationRequest();
         createLocationCallback();
         checkPermissionsAndStart();
+        setupRefreshButton();
 
+    }
+
+    private void setupRefreshButton() {
+        ImageButton refreshButton = findViewById(R.id.refreshButton);
+        refreshButton.setOnClickListener(v -> {
+            // Start rotation animation
+            Animation rotateAnim = AnimationUtils.loadAnimation(this, R.anim.rotate_once);
+            v.startAnimation(rotateAnim);
+
+            // Update UI after animation completes
+            rotateAnim.setAnimationListener(new Animation.AnimationListener() {
+                @Override
+                public void onAnimationStart(Animation animation) {
+                    v.setEnabled(false);
+                }
+
+                @Override
+                public void onAnimationEnd(Animation animation) {
+                    v.setEnabled(true);
+                    updateUI();
+                }
+
+                @Override
+                public void onAnimationRepeat(Animation animation) {}
+            });
+        });
     }
 
     private void addGeofence() {
@@ -178,33 +212,90 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateUI() {
-        SharedPreferences prefs = getSharedPreferences("GeofencePrefs", MODE_PRIVATE);
-        String checkInTime = prefs.getString("checkInTime", "N/A");
-        String checkOutTime = prefs.getString("checkOutTime", "N/A");
+        runOnUiThread(() -> {
+            // Show refreshing state immediately
+            statusTextView.setText("Status: Refreshing...");
+            statusTextView.setTextColor(Color.GRAY);
+            statusTextView.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0);
 
-        checkInTimeTextView.setText("Check-in Time: " + checkInTime);
-        checkOutTimeTextView.setText("Check-out Time: " + checkOutTime);
-
-        if (checkInTime.equals("N/A") && checkOutTime.equals("N/A")) {
-            statusTextView.setText("Status: Outside geofence");
-        } else if (!checkInTime.equals("N/A") && checkOutTime.equals("N/A")) {
-            statusTextView.setText("Status: Inside geofence");
-        } else {
             try {
-                SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
-                Date checkInDate = format.parse(checkInTime);
-                Date checkOutDate = format.parse(checkOutTime);
-                long diff = checkOutDate.getTime() - checkInDate.getTime();
-                long hours = diff / (60 * 60 * 1000);
-                long minutes = (diff % (60 * 60 * 1000)) / (60 * 1000);
+                // 1. Get fresh data with timestamp
+                SharedPreferences prefs = getSharedPreferences("GeofencePrefs", MODE_PRIVATE);
+                String checkInTime = prefs.getString("checkInTime", "N/A");
+                String checkOutTime = prefs.getString("checkOutTime", "N/A");
+                String lastUpdateTime = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
 
-                String total = String.format(Locale.getDefault(), "%d hrs %d mins", hours, minutes);
-                statusTextView.setText(String.format("Last check-out: %s (Total: %s)", checkOutTime, total));
-            } catch (ParseException e) {
-                statusTextView.setText("Status: Time calculation error");
-                Log.e(TAG, "Date parsing error", e);
+                // 2. Update TextViews with timestamp
+                checkInTimeTextView.setText(String.format("Check-in: %s", checkInTime));
+                checkOutTimeTextView.setText(String.format("Check-out: %s", checkOutTime));
+
+                // 3. Determine current status
+                if (checkInTime.equals("N/A")) {
+                    // Case 1: Outside geofence
+                    statusTextView.setText("Outside office area");
+                    statusTextView.setTextColor(Color.RED);
+                    statusTextView.setCompoundDrawablesWithIntrinsicBounds(
+                            R.drawable.ic_location_off, 0, 0, 0);
+                }
+                else if (!checkOutTime.equals("N/A")) {
+                    // Case 2: Previous session
+                    try {
+                        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+                        Date checkInDate = format.parse(checkInTime);
+                        Date checkOutDate = format.parse(checkOutTime);
+
+                        long duration = checkOutDate.getTime() - checkInDate.getTime();
+                        String durationText = String.format(Locale.getDefault(),
+                                "%dh %02dm",
+                                TimeUnit.MILLISECONDS.toHours(duration),
+                                TimeUnit.MILLISECONDS.toMinutes(duration) % 60);
+
+                        statusTextView.setText(String.format("Last session: %s", durationText));
+                        statusTextView.setTextColor(Color.BLUE);
+                        statusTextView.setCompoundDrawablesWithIntrinsicBounds(
+                                R.drawable.ic_history, 0, 0, 0);
+                    } catch (ParseException e) {
+                        statusTextView.setText("Session recorded");
+                        statusTextView.setTextColor(Color.BLUE);
+                    }
+                }
+                else {
+                    // Case 3: Currently checked in
+                    boolean isWifiValid = WifiValidator.isConnectedToOfficeWifi(this);
+                    if (isWifiValid) {
+                        statusTextView.setText("In office (Verified)");
+                        statusTextView.setTextColor(Color.GREEN);
+                        statusTextView.setCompoundDrawablesWithIntrinsicBounds(
+                                R.drawable.ic_verified, 0, 0, 0);
+                    } else {
+                        statusTextView.setText("In office (Unverified)");
+                        statusTextView.setTextColor(ContextCompat.getColor(this, R.color.unverified_orange));
+                        statusTextView.setCompoundDrawablesWithIntrinsicBounds(
+                                R.drawable.ic_warning, 0, 0, 0);
+                    }
+                }
+
+                // 4. Add last update time
+                TextView lastUpdateView = findViewById(R.id.lastUpdateTextView);
+                if (lastUpdateView != null) {
+                    lastUpdateView.setText(String.format("Last update: %s", lastUpdateTime));
+                }
+
+            } catch (Exception e) {
+                Log.e(TAG, "UI update failed", e);
+                statusTextView.setText("Status update failed");
+                statusTextView.setTextColor(Color.RED);
             }
+        });
+    }
+
+    private void setStatusIcon(@DrawableRes int iconRes) {
+        Drawable icon = null;
+        if (iconRes != 0) {
+            icon = ContextCompat.getDrawable(this, iconRes);
+            icon.setBounds(0, 0, icon.getIntrinsicWidth(), icon.getIntrinsicHeight());
         }
+        statusTextView.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, null, null, null);
     }
 
     private void createLocationRequest() {
@@ -234,10 +325,14 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void checkPermissionsAndStart() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED ||
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_WIFI_STATE) != PackageManager.PERMISSION_GRANTED) {
+
             ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
+                    new String[]{
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_WIFI_STATE
+                    },
                     REQUEST_FOREGROUND_LOCATION);
         } else {
             handlePostPermissionSetup();
@@ -313,18 +408,28 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
         if (requestCode == REQUEST_FOREGROUND_LOCATION) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            boolean allGranted = true;
+            for (int result : grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                    break;
+                }
+            }
+
+            if (allGranted) {
                 handlePostPermissionSetup();
             } else {
-                Toast.makeText(this, "Location permission required", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "Location and WiFi permissions required", Toast.LENGTH_LONG).show();
+                // Optionally re-request permissions or show explanation
             }
         } else if (requestCode == REQUEST_BACKGROUND_LOCATION) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startAppFeatures();
             } else {
                 Toast.makeText(this, "Background location recommended for full functionality", Toast.LENGTH_LONG).show();
-                startAppFeatures();
+                startAppFeatures(); // Still proceed without background location
             }
         }
     }

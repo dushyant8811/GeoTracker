@@ -29,8 +29,14 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
             return;
         }
 
-        // Handle manual check-in request
+        // Handle manual check-in first
         if ("MANUAL_CHECK_IN".equals(intent.getAction())) {
+            if (!WifiValidator.isConnectedToOfficeWifi(context)) {
+                NotificationHelper.sendNotification(context,
+                        "Verification Failed",
+                        "Connect to office WiFi to check-in");
+                return;
+            }
             handleManualCheckIn(context);
             return;
         }
@@ -56,12 +62,21 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
                 String existingCheckIn = prefs.getString("checkInTime", "N/A");
                 String existingCheckOut = prefs.getString("checkOutTime", "N/A");
 
+                // First verify Wi-Fi before any check-in processing
+                if (!WifiValidator.isConnectedToOfficeWifi(context)) {
+                    LogFileHelper.appendLog(context, "Geofence entry rejected - Not on office Wi-Fi");
+                    NotificationHelper.sendNotification(context,
+                            "Verification Failed",
+                            "Connect to office Wi-Fi to complete check-in");
+                    return; // Exit early if Wi-Fi validation fails
+                }
+
                 if (existingCheckIn.equals("N/A") || !existingCheckOut.equals("N/A")) {
                     editor.putString("checkInTime", time);
                     editor.remove("checkOutTime");
-                    LogFileHelper.appendLog(context, "Check-in at " + time);
-                    Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
+                    LogFileHelper.appendLog(context, "Check-in at " + time + " (Wi-Fi verified)");
 
+                    Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         context.startForegroundService(startServiceIntent);
                     } else {
@@ -70,13 +85,23 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
 
                     NotificationHelper.sendNotification(context,
                             "Geofence Entered",
-                            "You entered the geofence at " + time);
+                            "You entered the geofence at " + time + "\nWi-Fi verified");
                 }
                 handleEnterTransition(context, editor, time);
                 break;
 
             case Geofence.GEOFENCE_TRANSITION_EXIT:
+                // Check Wi-Fi status on exit (for suspicious activity detection)
+                boolean stillOnOfficeWifi = WifiValidator.isConnectedToOfficeWifi(context);
+
                 handleExitTransition(context, editor, time);
+
+                if (stillOnOfficeWifi) {
+                    LogFileHelper.appendLog(context, "Suspicious exit - Still connected to office Wi-Fi");
+                    NotificationHelper.sendNotification(context,
+                            "Attention Needed",
+                            "You left the geofence but are still on office Wi-Fi");
+                }
                 break;
 
             default:
@@ -88,6 +113,14 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
 
         editor.apply();
         context.sendBroadcast(new Intent("com.example.geotracker.UPDATE_UI"));
+
+        sendUpdateUIBroadcast(context);
+    }
+
+    private void sendUpdateUIBroadcast(Context context) {
+        Intent updateIntent = new Intent("com.example.geotracker.UPDATE_UI");
+        updateIntent.setPackage(context.getPackageName()); // Add this for Android 8+ compatibility
+        context.sendBroadcast(updateIntent);
     }
 
     private void handleManualCheckIn(Context context) {

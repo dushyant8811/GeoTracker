@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
+import android.os.Handler;  // Add this import statement
 
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
@@ -24,6 +25,9 @@ public class LocationForegroundService extends Service {
     private static final String TAG = "LocationForegroundSvc";
     private static final String CHANNEL_ID = "location_channel";
     private static final int NOTIFICATION_ID = 1;
+
+    private Handler wifiCheckHandler = new Handler();
+    private static final long WIFI_CHECK_INTERVAL = 300000;
 
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
@@ -42,6 +46,7 @@ public class LocationForegroundService extends Service {
         startForeground(NOTIFICATION_ID, NotificationHelper.getForegroundNotification(this));
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+
 
         LocationRequest locationRequest = LocationRequest.create()
                 .setInterval(5000)
@@ -71,6 +76,24 @@ public class LocationForegroundService extends Service {
 
         fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper());
         Log.d(TAG, "Location updates requested");
+
+        startPeriodicWifiChecks();
+    }
+
+    private void startPeriodicWifiChecks() {
+        wifiCheckHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!WifiValidator.isConnectedToOfficeWifi(LocationForegroundService.this)) {
+                    LogFileHelper.appendLog(LocationForegroundService.this,
+                            "WiFi validation failed during session");
+                    NotificationHelper.sendNotification(LocationForegroundService.this,
+                            "Session Paused",
+                            "Reconnect to office WiFi to continue tracking");
+                }
+                wifiCheckHandler.postDelayed(this, WIFI_CHECK_INTERVAL);
+            }
+        }, WIFI_CHECK_INTERVAL);
     }
 
     @Override
@@ -83,6 +106,8 @@ public class LocationForegroundService extends Service {
     public void onDestroy() {
         Log.d(TAG, "Service onDestroy called");
         super.onDestroy();
+
+        wifiCheckHandler.removeCallbacksAndMessages(null);
 
         if (fusedLocationClient != null && locationCallback != null) {
             fusedLocationClient.removeLocationUpdates(locationCallback);

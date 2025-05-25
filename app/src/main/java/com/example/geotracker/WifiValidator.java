@@ -1,5 +1,6 @@
 package com.example.geotracker;
 
+import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.net.wifi.WifiInfo;
@@ -10,7 +11,7 @@ import androidx.core.app.ActivityCompat;
 public class WifiValidator {
     private static final String TAG = "WifiValidator";
     private static final String TARGET_SSID = "Poco";
-    private static final String TARGET_BSSID = "4a:fd:f9:2a:57:09";
+    private static final String TARGET_BSSID = "46:d3:3a:90:a1:d3";
 
     public static boolean isConnectedToOfficeWifi(Context context) {
         if (!hasWifiPermissions(context)) {
