@@ -1,6 +1,7 @@
 package com.example.geotracker;
 
 import android.Manifest;
+import android.app.AlertDialog;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -35,6 +36,20 @@ import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firestore.FirebaseFirestore;
+
+import com.google.firebase.firestore.DocumentReference;
+import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.FieldValue;
+import com.google.android.gms.security.ProviderInstaller;
+import com.google.android.gms.common.GooglePlayServicesRepairableException;
+import com.google.android.gms.common.GooglePlayServicesNotAvailableException;
+import android.app.Application;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.osmdroid.config.Configuration;
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
@@ -46,7 +61,9 @@ import org.osmdroid.views.overlay.Polygon;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends AppCompatActivity {
@@ -75,19 +92,32 @@ public class MainActivity extends AppCompatActivity {
     private TextView checkInTimeTextView;
     private TextView checkOutTimeTextView;
     private BroadcastReceiver geofenceUpdateReceiver;
-
+    private FirebaseFirestore db;
     private boolean isReceiverRegistered = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // Check authentication - no FirebaseApp.initialize needed
+        if (FirebaseAuth.getInstance().getCurrentUser() == null) {
+            startActivity(new Intent(this, LoginActivity.class));
+            finish();
+            return;
+        }
+
         Configuration.getInstance().setUserAgentValue(getPackageName());
         setContentView(R.layout.activity_main);
+
 
         // Initialize UI components
         statusTextView = findViewById(R.id.statusTextView);
         checkInTimeTextView = findViewById(R.id.checkInTimeTextView);
         checkOutTimeTextView = findViewById(R.id.checkOutTimeTextView);
+
+        // Initialize and set up logout button
+        Button btnLogout = findViewById(R.id.btnLogout);
+        btnLogout.setOnClickListener(v -> showLogoutConfirmationDialog());
 
         // Map setup
         mapView = findViewById(R.id.mapView);
@@ -107,6 +137,21 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
+    private void showLogoutConfirmationDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Logout")
+                .setMessage("Are you sure you want to logout?")
+                .setPositiveButton("Yes", (dialog, which) -> performLogout())
+                .setNegativeButton("No", null)
+                .show();
+    }
+
+    private void performLogout() {
+        FirebaseAuth.getInstance().signOut();
+        startActivity(new Intent(this, LoginActivity.class));
+        finish();
+        overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+    }
     private void setupRefreshButton() {
         ImageButton refreshButton = findViewById(R.id.refreshButton);
         refreshButton.setOnClickListener(v -> {
@@ -176,6 +221,9 @@ public class MainActivity extends AppCompatActivity {
 
     // Rest of the methods (initMapOverlay, updateUI, etc.)
     private void initMapOverlay() {
+
+        mapView.getOverlays().clear();
+
         geofenceCircle = new Polygon();
         geofenceCircle.setPoints(Polygon.pointsAsCircle(new GeoPoint(GEOFENCE_LAT, GEOFENCE_LON), GEOFENCE_RADIUS));
         geofenceCircle.setFillColor(0x44FF0000);
