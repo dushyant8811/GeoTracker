@@ -100,8 +100,21 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
 
         // Check authentication - no FirebaseApp.initialize needed
-        if (FirebaseAuth.getInstance().getCurrentUser() == null) {
+        FirebaseApp.initializeApp(this);
+
+        // Improved authentication check
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser == null) {
             startActivity(new Intent(this, LoginActivity.class));
+            finish();
+            return;
+        }
+        // Check stored role
+        SharedPreferences prefs = getSharedPreferences("UserPrefs", MODE_PRIVATE);
+        String role = prefs.getString("user_role", "");
+
+        if ("hr".equals(role)) {
+            startActivity(new Intent(this, HRDashboardActivity.class));
             finish();
             return;
         }

@@ -22,7 +22,6 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         Log.d(TAG, "Geofence event received");
-        LogFileHelper.appendLog(context, "Geofence event received");
 
         if (intent == null) {
             Log.e(TAG, "Received null intent");
@@ -64,7 +63,7 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
 
                 // First verify Wi-Fi before any check-in processing
                 if (!WifiValidator.isConnectedToOfficeWifi(context)) {
-                    LogFileHelper.appendLog(context, "Geofence entry rejected - Not on office Wi-Fi");
+
                     NotificationHelper.sendNotification(context,
                             "Verification Failed",
                             "Connect to office Wi-Fi to complete check-in");
@@ -74,7 +73,6 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
                 if (existingCheckIn.equals("N/A") || !existingCheckOut.equals("N/A")) {
                     editor.putString("checkInTime", time);
                     editor.remove("checkOutTime");
-                    LogFileHelper.appendLog(context, "Check-in at " + time + " (Wi-Fi verified)");
 
                     Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -97,7 +95,7 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
                 handleExitTransition(context, editor, time);
 
                 if (stillOnOfficeWifi) {
-                    LogFileHelper.appendLog(context, "Suspicious exit - Still connected to office Wi-Fi");
+
                     NotificationHelper.sendNotification(context,
                             "Attention Needed",
                             "You left the geofence but are still on office Wi-Fi");
@@ -105,7 +103,6 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
                 break;
 
             default:
-                LogFileHelper.appendLog(context, "Unknown transition: " + transition);
                 NotificationHelper.sendNotification(context,
                         "Geofence Alert",
                         "Unknown geofence transition detected at " + time);
@@ -160,7 +157,6 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
 
         editor.putString("checkInTime", time);
         editor.remove("checkOutTime");
-        LogFileHelper.appendLog(context, "Check-in at " + time);
 
         // Start foreground service
         Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
@@ -185,8 +181,7 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
         }
 
         editor.putString("checkOutTime", time);
-        LogFileHelper.appendLog(context, "Check-out at " + time);
-
+        
         // Stop foreground service
         Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
         context.stopService(stopServiceIntent);

@@ -85,8 +85,7 @@ public class LocationForegroundService extends Service {
             @Override
             public void run() {
                 if (!WifiValidator.isConnectedToOfficeWifi(LocationForegroundService.this)) {
-                    LogFileHelper.appendLog(LocationForegroundService.this,
-                            "WiFi validation failed during session");
+
                     NotificationHelper.sendNotification(LocationForegroundService.this,
                             "Session Paused",
                             "Reconnect to office WiFi to continue tracking");

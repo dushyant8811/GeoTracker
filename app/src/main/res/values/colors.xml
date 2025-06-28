@@ -1,8 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Existing colors -->
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     <color name="pink">#FFC0CB</color>
     <color name="warning_yellow">#DBC827</color>
     <color name="unverified_orange">#FF9800</color>
+    <color name="your_splash_color">#151B54</color>
+    <color name="colorPrimary">#2196F3</color>
+    <color name="colorPrimaryDark">#1976D2</color>
+    <color name="colorAccent">#FF4081</color>
+    <color name="error_red">#FF0000</color>
+    <color name="default_outline">#BDBDBD</color>
+    <color name="card_background">#FFFFFF</color>
+    <color name="screen_background">#E3F2FD</color>
+
+    <!-- Add these toggle colors -->
+    <color name="toggle_background">#F5F5F5</color>
+    <color name="toggle_selected_text">#FFFFFF</color>
+    <color name="toggle_unselected_text">#757575</color>
+    <color name="toggle_track">#E0E0E0</color>
+    <color name="toggle_slider">#2196F3</color>
 </resources>

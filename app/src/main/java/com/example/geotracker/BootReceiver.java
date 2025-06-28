@@ -32,7 +32,6 @@ public class BootReceiver extends BroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
             Log.d(TAG, "Device rebooted. Initializing geofence recovery...");
-            LogFileHelper.appendLog(context, "Device reboot detected");
 
             // 1. Always re-register geofences first
             new GeofenceHelper(context).reRegisterGeofences();
@@ -66,7 +65,6 @@ public class BootReceiver extends BroadcastReceiver {
                     });
                 } else {
                     Log.w(TAG, "Location permission not granted after reboot");
-                    LogFileHelper.appendLog(context, "Cannot check location after reboot - permission missing");
                 }
             }
         }
@@ -92,7 +90,7 @@ public class BootReceiver extends BroadcastReceiver {
                 editor.putString("checkInTime", currentTime);
                 editor.remove("checkOutTime");
                 Log.d(TAG, "New check-in recorded after reboot");
-                LogFileHelper.appendLog(context, "New check-in at " + currentTime + " after reboot");
+
             }
 
             // Start foreground service in all cases
@@ -118,7 +116,6 @@ public class BootReceiver extends BroadcastReceiver {
                 // Was checked in but now outside - record check-out
                 editor.putString("checkOutTime", currentTime);
                 Log.d(TAG, "Auto check-out recorded after reboot");
-                LogFileHelper.appendLog(context, "Auto check-out at " + currentTime + " after reboot");
 
                 // Stop foreground service
                 Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
@@ -134,40 +131,50 @@ public class BootReceiver extends BroadcastReceiver {
     }
 
     private void requestFreshLocationWithTimeout(Context context, FusedLocationProviderClient client, SharedPreferences prefs) {
+        // Add permission check here
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "Location permission lost since initial check in onReceive()");
+            handleLocationPermissionLoss(context, prefs);
+            return;
+        }
+
         LocationRequest locationRequest = LocationRequest.create()
                 .setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY)
                 .setNumUpdates(1)
                 .setExpirationDuration(LOCATION_TIMEOUT_MS);
 
-        client.requestLocationUpdates(locationRequest, new LocationCallback() {
-            @Override
-            public void onLocationResult(LocationResult locationResult) {
-                if (locationResult != null && !locationResult.getLocations().isEmpty()) {
-                    handleLocationResult(context, locationResult.getLastLocation(), prefs);
-                } else {
-                    Log.w(TAG, "Location request timed out");
-                    LogFileHelper.appendLog(context, "Location check after reboot failed - assuming outside");
-
-                    // Default to check-out if we can't determine location
-                    SharedPreferences.Editor editor = prefs.edit();
-                    String currentTime = sdf.format(new Date());
-
-                    // Only record check-out if there was a check-in
-                    String checkInTime = prefs.getString("checkInTime", "N/A");
-                    if (!checkInTime.equals("N/A")) {
-                        editor.putString("checkOutTime", currentTime);
-                        editor.apply();
-
-                        // Stop foreground service
-                        Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
-                        context.stopService(stopServiceIntent);
-
-                        NotificationHelper.sendNotification(context, "GeoTracker",
-                                "Couldn't verify location - session ended at " + currentTime);
-                    }
+        try {
+            client.requestLocationUpdates(locationRequest, new LocationCallback() {
+                @Override
+                public void onLocationResult(LocationResult locationResult) {
+                    // ... existing code ...
                 }
-                client.removeLocationUpdates(this);
-            }
-        }, Looper.getMainLooper());
+            }, Looper.getMainLooper());
+        } catch (SecurityException e) {
+            Log.e(TAG, "SecurityException when requesting location updates", e);
+            handleLocationPermissionLoss(context, prefs);
+        }
+    }
+
+    // Add this new helper method
+    private void handleLocationPermissionLoss(Context context, SharedPreferences prefs) {
+        Log.w(TAG, "Handling location permission loss");
+        SharedPreferences.Editor editor = prefs.edit();
+        String currentTime = sdf.format(new Date());
+
+        // Only record check-out if there was a check-in
+        String checkInTime = prefs.getString("checkInTime", "N/A");
+        if (!checkInTime.equals("N/A")) {
+            editor.putString("checkOutTime", currentTime);
+            editor.apply();
+
+            // Stop foreground service
+            Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
+            context.stopService(stopServiceIntent);
+
+            NotificationHelper.sendNotification(context, "GeoTracker",
+                    "Location permission revoked - session ended at " + currentTime);
+        }
     }
 }

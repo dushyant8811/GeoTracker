@@ -1,9 +1,60 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
-    <style name="Base.Theme.GeoTracker" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your light theme here. -->
-        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+    <!-- Base application theme -->
+    <style name="Base.Theme.GeoTracker" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Primary brand color -->
+        <item name="colorPrimary">#2196F3</item>
+        <item name="colorPrimaryVariant">#1976D2</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+
+        <!-- Secondary brand color -->
+        <item name="colorSecondary">#4CAF50</item>
+        <item name="colorSecondaryVariant">#388E3C</item>
+        <item name="colorOnSecondary">@android:color/white</item>
+
+        <!-- Status bar color -->
+        <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
+
+        <!-- Text input styling -->
+        <item name="colorControlActivated">#2196F3</item>
+        <item name="colorControlHighlight">#2196F3</item>
+        <item name="colorOnSurface">#2196F3</item>
+        <item name="colorError">@color/error_red</item>
+
+        <!-- Material Components styles -->
+        <item name="textInputStyle">@style/Widget.GeoTracker.TextInputLayout.OutlinedBox</item>
+        <item name="materialButtonStyle">@style/Widget.MaterialComponents.Button</item>
+
+        <!-- Theme overlays -->
+        <item name="materialThemeOverlay">@style/ThemeOverlay.GeoTracker</item>
     </style>
 
     <style name="Theme.GeoTracker" parent="Base.Theme.GeoTracker" />
+
+    <style name="ThemeOverlay.GeoTracker" parent="">
+        <item name="textInputStyle">@style/Widget.GeoTracker.TextInputLayout.OutlinedBox</item>
+    </style>
+
+    <!-- Custom TextInputLayout style -->
+    <style name="Widget.GeoTracker.TextInputLayout.OutlinedBox" parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+        <item name="boxStrokeColor">@color/outline_selector</item>
+        <item name="boxStrokeWidth">1dp</item>
+        <item name="boxStrokeWidthFocused">1.5dp</item>
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearance.GeoTracker.SmallComponent</item>
+        <item name="boxStrokeErrorColor">@color/error_red</item>
+        <item name="errorTextColor">@color/error_red</item>
+        <item name="hintTextColor">@color/outline_selector</item>
+    </style>
+
+    <!-- Shape Appearance -->
+    <style name="ShapeAppearance.GeoTracker.SmallComponent" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">8dp</item>
+    </style>
+
+    <!-- Toggle Text Style -->
+    <style name="ToggleText" parent="TextAppearance.AppCompat">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
 </resources>

@@ -11,12 +11,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
-    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-
-
 
     <application
         android:name=".MyApp"
@@ -36,11 +33,9 @@
             android:name="com.google.android.gms.version"
             android:value="@integer/google_play_services_version" />
 
-        <receiver android:name=".GeofenceBroadcastReceiver"
-            android:exported="true" />
+        <receiver android:name=".GeofenceBroadcastReceiver" android:exported="true" />
 
-        <receiver android:name=".BootReceiver"
-            android:exported="true">
+        <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
@@ -52,26 +47,28 @@
             android:exported="false"
             android:foregroundServiceType="location"/>
 
+        <!-- Splash Screen (NEW) -->
         <activity
-            android:name=".MainActivity"
-            android:exported="false" />
-
-        <activity
-            android:name=".HRDashboardActivity"
-            android:exported="true">
-            <!-- Optional intent filter if it should be launchable independently -->
-        </activity>
-
-        <activity
-            android:name=".LoginActivity"
-            android:exported="true">
+            android:name=".SplashActivity"
+            android:exported="true"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <activity android:name=".LogViewerActivity" />
+        <activity
+            android:name=".LoginActivity"
+            android:exported="true" />
+
+        <activity
+            android:name=".HRDashboardActivity"
+            android:exported="true" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true" />
 
     </application>
 
