@@ -5,7 +5,9 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.content.Intent;
 import android.content.res.Resources;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.InsetDrawable;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.TypedValue;
@@ -73,6 +75,7 @@ public class LoginActivity extends AppCompatActivity {
         // Initialize slider width after layout is drawn
         slider.post(() -> {
             RelativeLayout.LayoutParams params = (RelativeLayout.LayoutParams) slider.getLayoutParams();
+
             params.width = toggleEmployee.getWidth();
             params.height = ViewGroup.LayoutParams.MATCH_PARENT;
             params.addRule(RelativeLayout.ALIGN_PARENT_START);
@@ -143,8 +146,17 @@ public class LoginActivity extends AppCompatActivity {
     }
 
     private void setSliderCorners(boolean leftRounded, boolean rightRounded) {
-        GradientDrawable drawable = (GradientDrawable) slider.getBackground();
-        if (drawable != null) {
+        Drawable background = slider.getBackground();
+
+        // Handle InsetDrawable case
+        if (background instanceof InsetDrawable) {
+            InsetDrawable insetDrawable = (InsetDrawable) background;
+            background = insetDrawable.getDrawable();
+        }
+
+        // Now try to get the GradientDrawable
+        if (background instanceof GradientDrawable) {
+            GradientDrawable drawable = (GradientDrawable) background;
             if (leftRounded && rightRounded) {
                 // All corners rounded (during animation)
                 drawable.setCornerRadius(cornerRadius);

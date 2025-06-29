@@ -19,6 +19,8 @@
     <color name="toggle_background">#F5F5F5</color>
     <color name="toggle_selected_text">#FFFFFF</color>
     <color name="toggle_unselected_text">#757575</color>
-    <color name="toggle_track">#E0E0E0</color>
+    <color name="toggle_track">#d9e5ef</color>
     <color name="toggle_slider">#2196F3</color>
+    <color name="title">#0047AB</color>
+<!--    d9e5ef-->
 </resources>

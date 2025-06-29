@@ -15,12 +15,13 @@
         <!-- App Title -->
         <TextView
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="50dp"
             android:text="GeoTracker"
             android:textSize="40dp"
             android:textStyle="bold"
-            android:textColor="@color/colorPrimary"
-            android:layout_marginBottom="8dp"/>
+            android:fontFamily="@font/poppins_medium"
+            android:textColor="@color/title"
+            android:layout_marginBottom="0dp"/>
 
         <!-- Tagline -->
         <TextView
@@ -29,7 +30,7 @@
             android:text="Attendance tracking simplified"
             android:textSize="20sp"
             android:textColor="#616161"
-            android:layout_marginBottom="32dp"/>
+            android:layout_marginBottom="16dp"/>
 
         <!-- Card Container -->
         <androidx.cardview.widget.CardView
@@ -51,6 +52,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Login"
+                    android:fontFamily="@font/poppins_medium"
                     android:textSize="30sp"
                     android:textStyle="bold"
                     android:textColor="#000000"
@@ -62,8 +64,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     app:cardCornerRadius="24dp"
-                    app:strokeColor="#BDBDBD"
-                    app:strokeWidth="1dp"
+                    app:strokeColor="#90D5FF"
+                    app:strokeWidth="0dp"
                     android:layout_marginBottom="16dp"
                     app:cardBackgroundColor="@color/toggle_track">
 
@@ -88,7 +90,10 @@
                                 android:layout_width="0dp"
                                 android:layout_height="match_parent"
                                 android:layout_weight="1"
-                                android:text="EMPLOYEE"
+                                android:text="Employee"
+                                android:textSize="13dp"
+                                android:textAllCaps="false"
+                                android:fontFamily="@font/poppins_medium"
                                 android:textColor="@color/toggle_selected_text"
                                 android:gravity="center"
                                 style="@style/ToggleText"
@@ -99,7 +104,9 @@
                                 android:layout_width="0dp"
                                 android:layout_height="match_parent"
                                 android:layout_weight="1"
+                                android:textSize="13dp"
                                 android:text="HR"
+                                android:fontFamily="@font/poppins_medium"
                                 android:textColor="@color/toggle_unselected_text"
                                 android:gravity="center"
                                 style="@style/ToggleText"
@@ -149,8 +156,9 @@
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnLogin"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_height="60dp"
                     android:text="Login"
+                    android:fontFamily="@font/poppins_medium"
                     app:cornerRadius="8dp"
                     android:textColor="@android:color/white"
                     app:backgroundTint="@color/colorPrimary"
