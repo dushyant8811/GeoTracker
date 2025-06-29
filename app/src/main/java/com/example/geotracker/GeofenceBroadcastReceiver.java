@@ -13,11 +13,15 @@ import com.google.android.gms.location.GeofencingEvent;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 public class GeofenceBroadcastReceiver extends BroadcastReceiver {
 
     private static final String TAG = "GeofenceReceiver";
     private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+    private final Executor executor = Executors.newSingleThreadExecutor();
+    private static final String OFFICE_NAME = "Headquarters"; // Default office name
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -53,49 +57,26 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
 
         int transition = event.getGeofenceTransition();
         String time = sdf.format(new Date());
-        SharedPreferences prefs = context.getSharedPreferences("GeofencePrefs", Context.MODE_PRIVATE);
-        SharedPreferences.Editor editor = prefs.edit();
 
         switch (transition) {
             case Geofence.GEOFENCE_TRANSITION_ENTER:
-                String existingCheckIn = prefs.getString("checkInTime", "N/A");
-                String existingCheckOut = prefs.getString("checkOutTime", "N/A");
-
                 // First verify Wi-Fi before any check-in processing
                 if (!WifiValidator.isConnectedToOfficeWifi(context)) {
-
                     NotificationHelper.sendNotification(context,
                             "Verification Failed",
                             "Connect to office Wi-Fi to complete check-in");
                     return; // Exit early if Wi-Fi validation fails
                 }
 
-                if (existingCheckIn.equals("N/A") || !existingCheckOut.equals("N/A")) {
-                    editor.putString("checkInTime", time);
-                    editor.remove("checkOutTime");
-
-                    Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        context.startForegroundService(startServiceIntent);
-                    } else {
-                        context.startService(startServiceIntent);
-                    }
-
-                    NotificationHelper.sendNotification(context,
-                            "Geofence Entered",
-                            "You entered the geofence at " + time + "\nWi-Fi verified");
-                }
-                handleEnterTransition(context, editor, time);
+                handleEnterTransition(context, time);
                 break;
 
             case Geofence.GEOFENCE_TRANSITION_EXIT:
                 // Check Wi-Fi status on exit (for suspicious activity detection)
                 boolean stillOnOfficeWifi = WifiValidator.isConnectedToOfficeWifi(context);
-
-                handleExitTransition(context, editor, time);
+                handleExitTransition(context, time);
 
                 if (stillOnOfficeWifi) {
-
                     NotificationHelper.sendNotification(context,
                             "Attention Needed",
                             "You left the geofence but are still on office Wi-Fi");
@@ -108,9 +89,6 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
                         "Unknown geofence transition detected at " + time);
         }
 
-        editor.apply();
-        context.sendBroadcast(new Intent("com.example.geotracker.UPDATE_UI"));
-
         sendUpdateUIBroadcast(context);
     }
 
@@ -121,73 +99,79 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
     }
 
     private void handleManualCheckIn(Context context) {
-        SharedPreferences prefs = context.getSharedPreferences("GeofencePrefs", Context.MODE_PRIVATE);
-        String checkInTime = prefs.getString("checkInTime", "N/A");
-        String checkOutTime = prefs.getString("checkOutTime", "N/A");
+        executor.execute(() -> {
+            AppDatabase db = AppDatabase.getInstance(context);
+            AttendanceDao dao = db.attendanceDao();
 
-        if (checkInTime.equals("N/A") || !checkOutTime.equals("N/A")) {
-            String time = sdf.format(new Date());
-            SharedPreferences.Editor editor = prefs.edit();
-            editor.putString("checkInTime", time);
-            editor.remove("checkOutTime");
-            editor.apply();
+            // Check if there's an active session
+            AttendanceRecord activeRecord = dao.getActiveRecord();
+            if (activeRecord == null) {
+                // Create new record
+                String time = sdf.format(new Date());
+                AttendanceRecord record = new AttendanceRecord(OFFICE_NAME, time);
+                dao.insert(record);
 
-            // Start foreground service
-            Intent serviceIntent = new Intent(context, LocationForegroundService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent);
-            } else {
-                context.startService(serviceIntent);
+                // Start foreground service
+                Intent serviceIntent = new Intent(context, LocationForegroundService.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent);
+                } else {
+                    context.startService(serviceIntent);
+                }
+
+                NotificationHelper.sendNotification(context,
+                        "Manual Check-In",
+                        "You were already inside the geofence at " + time);
             }
-
-            NotificationHelper.sendNotification(context,
-                    "Manual Check-In",
-                    "You were already inside the geofence at " + time);
-        }
+        });
     }
 
-    private void handleEnterTransition(Context context, SharedPreferences.Editor editor, String time) {
-        String existingCheckOut = context.getSharedPreferences("GeofencePrefs", Context.MODE_PRIVATE)
-                .getString("checkOutTime", "N/A");
+    private void handleEnterTransition(Context context, String time) {
+        executor.execute(() -> {
+            AppDatabase db = AppDatabase.getInstance(context);
+            AttendanceDao dao = db.attendanceDao();
 
-        if (existingCheckOut.equals("N/A")) {
-            // Already inside, no need to update
-            return;
-        }
+            // Check if there's an active session
+            AttendanceRecord activeRecord = dao.getActiveRecord();
+            if (activeRecord == null) {
+                // Create new record
+                AttendanceRecord record = new AttendanceRecord(OFFICE_NAME, time);
+                dao.insert(record);
 
-        editor.putString("checkInTime", time);
-        editor.remove("checkOutTime");
+                // Start foreground service
+                Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(startServiceIntent);
+                } else {
+                    context.startService(startServiceIntent);
+                }
 
-        // Start foreground service
-        Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(startServiceIntent);
-        } else {
-            context.startService(startServiceIntent);
-        }
-
-        NotificationHelper.sendNotification(context,
-                "Geofence Entered",
-                "You entered the geofence at " + time);
+                NotificationHelper.sendNotification(context,
+                        "Geofence Entered",
+                        "You entered the geofence at " + time);
+            }
+        });
     }
 
-    private void handleExitTransition(Context context, SharedPreferences.Editor editor, String time) {
-        String existingCheckIn = context.getSharedPreferences("GeofencePrefs", Context.MODE_PRIVATE)
-                .getString("checkInTime", "N/A");
+    private void handleExitTransition(Context context, String time) {
+        executor.execute(() -> {
+            AppDatabase db = AppDatabase.getInstance(context);
+            AttendanceDao dao = db.attendanceDao();
 
-        if (existingCheckIn.equals("N/A")) {
-            // Wasn't checked in, ignore exit
-            return;
-        }
+            // Get active session and close it
+            AttendanceRecord activeRecord = dao.getActiveRecord();
+            if (activeRecord != null) {
+                activeRecord.checkOutTime = time;
+                dao.update(activeRecord);
 
-        editor.putString("checkOutTime", time);
-        
-        // Stop foreground service
-        Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
-        context.stopService(stopServiceIntent);
+                // Stop foreground service
+                Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
+                context.stopService(stopServiceIntent);
 
-        NotificationHelper.sendNotification(context,
-                "Geofence Exited",
-                "You exited the geofence at " + time);
+                NotificationHelper.sendNotification(context,
+                        "Geofence Exited",
+                        "You exited the geofence at " + time);
+            }
+        });
     }
 }

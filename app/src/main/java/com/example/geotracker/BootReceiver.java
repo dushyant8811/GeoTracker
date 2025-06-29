@@ -4,7 +4,6 @@ import android.Manifest;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.os.Build;
@@ -19,6 +18,8 @@ import com.google.android.gms.location.LocationServices;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 public class BootReceiver extends BroadcastReceiver {
     private static final String TAG = "BootReceiver";
@@ -27,6 +28,8 @@ public class BootReceiver extends BroadcastReceiver {
     private static final float GEOFENCE_RADIUS = 150;
     private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
     private static final int LOCATION_TIMEOUT_MS = 10000; // 10 seconds timeout
+    private static final String OFFICE_NAME = "Headquarters"; // Default office name
+    private final Executor executor = Executors.newSingleThreadExecutor();
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -36,106 +39,108 @@ public class BootReceiver extends BroadcastReceiver {
             // 1. Always re-register geofences first
             new GeofenceHelper(context).reRegisterGeofences();
 
-            // 2. Check session state before reboot
-            SharedPreferences prefs = context.getSharedPreferences("GeofencePrefs", Context.MODE_PRIVATE);
-            String checkInTime = prefs.getString("checkInTime", "N/A");
-            String checkOutTime = prefs.getString("checkOutTime", "N/A");
+            // 2. Check session state before reboot using Room DB
+            executor.execute(() -> {
+                AppDatabase db = AppDatabase.getInstance(context);
+                AttendanceDao dao = db.attendanceDao();
 
-            // 3. If there was an active session (check-in without check-out) or no session at all
-            if ((!checkInTime.equals("N/A") && checkOutTime.equals("N/A")) ||
-                    (checkInTime.equals("N/A") && checkOutTime.equals("N/A"))) {
+                // Check if there was an active session (check-in without check-out)
+                AttendanceRecord activeRecord = dao.getActiveRecord();
+                boolean hasActiveSession = (activeRecord != null);
 
-                Log.d(TAG, "Checking location state after reboot...");
-                NotificationHelper.sendNotification(context, "GeoTracker", "Recovering your session after reboot");
+                // Also check if there are no sessions at all (unknown state)
+                boolean noSessions = (dao.getAllRecords().size() == 0);
 
-                // 4. Get current location with timeout fallback
-                FusedLocationProviderClient client = LocationServices.getFusedLocationProviderClient(context);
+                if (hasActiveSession || noSessions) {
+                    Log.d(TAG, "Checking location state after reboot...");
+                    NotificationHelper.sendNotification(context, "GeoTracker", "Recovering your session after reboot");
 
-                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
-                        == PackageManager.PERMISSION_GRANTED) {
+                    // 4. Get current location with timeout fallback
+                    FusedLocationProviderClient client = LocationServices.getFusedLocationProviderClient(context);
 
-                    // Try to get last location quickly first
-                    client.getLastLocation().addOnSuccessListener(location -> {
-                        if (location != null) {
-                            handleLocationResult(context, location, prefs);
-                        } else {
-                            // If no last location, request fresh one with timeout
-                            requestFreshLocationWithTimeout(context, client, prefs);
-                        }
-                    });
-                } else {
-                    Log.w(TAG, "Location permission not granted after reboot");
+                    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+                            == PackageManager.PERMISSION_GRANTED) {
+
+                        // Try to get last location quickly first
+                        client.getLastLocation().addOnSuccessListener(location -> {
+                            if (location != null) {
+                                handleLocationResult(context, location, activeRecord);
+                            } else {
+                                // If no last location, request fresh one with timeout
+                                requestFreshLocationWithTimeout(context, client, activeRecord);
+                            }
+                        });
+                    } else {
+                        Log.w(TAG, "Location permission not granted after reboot");
+                    }
                 }
-            }
+            });
         }
     }
 
-    private void handleLocationResult(Context context, Location location, SharedPreferences prefs) {
+    private void handleLocationResult(Context context, Location location, AttendanceRecord activeRecord) {
         float[] results = new float[1];
         Location.distanceBetween(
                 location.getLatitude(), location.getLongitude(),
                 GEOFENCE_LAT, GEOFENCE_LON, results
         );
 
-        SharedPreferences.Editor editor = prefs.edit();
         String currentTime = sdf.format(new Date());
+        AppDatabase db = AppDatabase.getInstance(context);
+        AttendanceDao dao = db.attendanceDao();
 
         if (results[0] <= GEOFENCE_RADIUS) {
-            // Inside geofence - handle accordingly
-            String checkInTime = prefs.getString("checkInTime", "N/A");
-            String checkOutTime = prefs.getString("checkOutTime", "N/A");
+            // Inside geofence
+            executor.execute(() -> {
+                if (activeRecord == null) {
+                    // No active session - create new check-in
+                    AttendanceRecord newRecord = new AttendanceRecord(OFFICE_NAME, currentTime);
+                    dao.insert(newRecord);
+                    Log.d(TAG, "New check-in recorded after reboot");
+                }
 
-            if (checkInTime.equals("N/A") || !checkOutTime.equals("N/A")) {
-                // No active session - create new check-in
-                editor.putString("checkInTime", currentTime);
-                editor.remove("checkOutTime");
-                Log.d(TAG, "New check-in recorded after reboot");
+                // Start foreground service in all cases
+                Intent serviceIntent = new Intent(context, LocationForegroundService.class);
+                serviceIntent.setAction(LocationForegroundService.ACTION_START_TRACKING);
 
-            }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent);
+                } else {
+                    context.startService(serviceIntent);
+                }
 
-            // Start foreground service in all cases
-            Intent serviceIntent = new Intent(context, LocationForegroundService.class);
-            serviceIntent.setAction(LocationForegroundService.ACTION_START_TRACKING);
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent);
-            } else {
-                context.startService(serviceIntent);
-            }
-
-            NotificationHelper.sendNotification(context, "GeoTracker",
-                    "Session " + (checkInTime.equals("N/A") ? "started" : "resumed") +
-                            " after reboot at " + currentTime);
-
+                String message = activeRecord == null ?
+                        "Session started after reboot at " + currentTime :
+                        "Session resumed after reboot at " + currentTime;
+                NotificationHelper.sendNotification(context, "GeoTracker", message);
+            });
         } else {
-            // Outside geofence - handle accordingly
-            String checkInTime = prefs.getString("checkInTime", "N/A");
-            String checkOutTime = prefs.getString("checkOutTime", "N/A");
+            // Outside geofence
+            executor.execute(() -> {
+                if (activeRecord != null) {
+                    // Was checked in but now outside - record check-out
+                    activeRecord.checkOutTime = currentTime;
+                    dao.update(activeRecord);
+                    Log.d(TAG, "Auto check-out recorded after reboot");
 
-            if (!checkInTime.equals("N/A") && checkOutTime.equals("N/A")) {
-                // Was checked in but now outside - record check-out
-                editor.putString("checkOutTime", currentTime);
-                Log.d(TAG, "Auto check-out recorded after reboot");
+                    // Stop foreground service
+                    Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
+                    context.stopService(stopServiceIntent);
 
-                // Stop foreground service
-                Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
-                context.stopService(stopServiceIntent);
-
-                NotificationHelper.sendNotification(context, "GeoTracker",
-                        "Auto checked-out after reboot at " + currentTime);
-            }
+                    NotificationHelper.sendNotification(context, "GeoTracker",
+                            "Auto checked-out after reboot at " + currentTime);
+                }
+            });
         }
 
-        editor.apply();
         context.sendBroadcast(new Intent("com.example.geotracker.UPDATE_UI"));
     }
 
-    private void requestFreshLocationWithTimeout(Context context, FusedLocationProviderClient client, SharedPreferences prefs) {
-        // Add permission check here
+    private void requestFreshLocationWithTimeout(Context context, FusedLocationProviderClient client, AttendanceRecord activeRecord) {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "Location permission lost since initial check in onReceive()");
-            handleLocationPermissionLoss(context, prefs);
+            handleLocationPermissionLoss(context, activeRecord);
             return;
         }
 
@@ -148,33 +153,39 @@ public class BootReceiver extends BroadcastReceiver {
             client.requestLocationUpdates(locationRequest, new LocationCallback() {
                 @Override
                 public void onLocationResult(LocationResult locationResult) {
-                    // ... existing code ...
+                    if (locationResult != null && locationResult.getLastLocation() != null) {
+                        handleLocationResult(context, locationResult.getLastLocation(), activeRecord);
+                    } else {
+                        Log.w(TAG, "Location request timed out or failed");
+                        handleLocationPermissionLoss(context, activeRecord);
+                    }
                 }
             }, Looper.getMainLooper());
         } catch (SecurityException e) {
             Log.e(TAG, "SecurityException when requesting location updates", e);
-            handleLocationPermissionLoss(context, prefs);
+            handleLocationPermissionLoss(context, activeRecord);
         }
     }
 
-    // Add this new helper method
-    private void handleLocationPermissionLoss(Context context, SharedPreferences prefs) {
+    private void handleLocationPermissionLoss(Context context, AttendanceRecord activeRecord) {
         Log.w(TAG, "Handling location permission loss");
-        SharedPreferences.Editor editor = prefs.edit();
         String currentTime = sdf.format(new Date());
 
-        // Only record check-out if there was a check-in
-        String checkInTime = prefs.getString("checkInTime", "N/A");
-        if (!checkInTime.equals("N/A")) {
-            editor.putString("checkOutTime", currentTime);
-            editor.apply();
+        if (activeRecord != null) {
+            executor.execute(() -> {
+                AppDatabase db = AppDatabase.getInstance(context);
+                AttendanceDao dao = db.attendanceDao();
 
-            // Stop foreground service
-            Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
-            context.stopService(stopServiceIntent);
+                activeRecord.checkOutTime = currentTime;
+                dao.update(activeRecord);
 
-            NotificationHelper.sendNotification(context, "GeoTracker",
-                    "Location permission revoked - session ended at " + currentTime);
+                // Stop foreground service
+                Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
+                context.stopService(stopServiceIntent);
+
+                NotificationHelper.sendNotification(context, "GeoTracker",
+                        "Location permission revoked - session ended at " + currentTime);
+            });
         }
     }
 }

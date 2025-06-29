@@ -17,7 +17,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.animation.Animation;
 import android.widget.Button;
-import android.widget.ImageButton;  // Replace Button import
+import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.view.animation.AnimationUtils;
@@ -41,16 +41,6 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.FirebaseFirestore;
 
-import com.google.firebase.firestore.DocumentReference;
-import com.google.firebase.firestore.DocumentSnapshot;
-import com.google.firebase.firestore.FieldValue;
-import com.google.android.gms.security.ProviderInstaller;
-import com.google.android.gms.common.GooglePlayServicesRepairableException;
-import com.google.android.gms.common.GooglePlayServicesNotAvailableException;
-import android.app.Application;
-import java.util.HashMap;
-import java.util.Map;
-
 import org.osmdroid.config.Configuration;
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
 import org.osmdroid.util.GeoPoint;
@@ -61,9 +51,10 @@ import org.osmdroid.views.overlay.Polygon;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
-import java.util.Map;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends AppCompatActivity {
@@ -75,7 +66,6 @@ public class MainActivity extends AppCompatActivity {
     private static final float GEOFENCE_RADIUS = 150;
     private static final int REQUEST_FOREGROUND_LOCATION = 100;
     private static final int REQUEST_BACKGROUND_LOCATION = 101;
-
     private static final int REQUEST_WIFI_PERMISSION = 102;
 
     // Location components
@@ -91,9 +81,12 @@ public class MainActivity extends AppCompatActivity {
     private TextView statusTextView;
     private TextView checkInTimeTextView;
     private TextView checkOutTimeTextView;
+    private TextView lastUpdateTextView;
     private BroadcastReceiver geofenceUpdateReceiver;
     private FirebaseFirestore db;
     private boolean isReceiverRegistered = false;
+
+    private final Executor executor = Executors.newSingleThreadExecutor();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -122,15 +115,21 @@ public class MainActivity extends AppCompatActivity {
         Configuration.getInstance().setUserAgentValue(getPackageName());
         setContentView(R.layout.activity_main);
 
-
         // Initialize UI components
         statusTextView = findViewById(R.id.statusTextView);
         checkInTimeTextView = findViewById(R.id.checkInTimeTextView);
         checkOutTimeTextView = findViewById(R.id.checkOutTimeTextView);
+        lastUpdateTextView = findViewById(R.id.lastUpdateTextView);
 
         // Initialize and set up logout button
         Button btnLogout = findViewById(R.id.btnLogout);
         btnLogout.setOnClickListener(v -> showLogoutConfirmationDialog());
+
+        // for roomdb testing
+        Button btnViewRecords = findViewById(R.id.btnViewRecords);
+        btnViewRecords.setOnClickListener(v -> {
+            startActivity(new Intent(MainActivity.this, AttendanceRecordsActivity.class));
+        });
 
         // Map setup
         mapView = findViewById(R.id.mapView);
@@ -147,7 +146,6 @@ public class MainActivity extends AppCompatActivity {
         createLocationCallback();
         checkPermissionsAndStart();
         setupRefreshButton();
-
     }
 
     private void showLogoutConfirmationDialog() {
@@ -165,6 +163,7 @@ public class MainActivity extends AppCompatActivity {
         finish();
         overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
     }
+
     private void setupRefreshButton() {
         ImageButton refreshButton = findViewById(R.id.refreshButton);
         refreshButton.setOnClickListener(v -> {
@@ -215,8 +214,6 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-
-
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             geofencingClient.addGeofences(request, pendingIntent)
                     .addOnSuccessListener(aVoid -> {
@@ -224,7 +221,6 @@ public class MainActivity extends AppCompatActivity {
                                 (float) GEOFENCE_LAT, (float) GEOFENCE_LON, GEOFENCE_RADIUS);
                         Log.d(TAG, "Geofence added silently");
                     })
-
                     .addOnFailureListener(e -> {
                         Log.e(TAG, "Geofence addition failed", e);
                         Toast.makeText(this, "Geofence setup failed", Toast.LENGTH_SHORT).show();
@@ -232,9 +228,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // Rest of the methods (initMapOverlay, updateUI, etc.)
     private void initMapOverlay() {
-
         mapView.getOverlays().clear();
 
         geofenceCircle = new Polygon();
@@ -273,80 +267,83 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateUI() {
-        runOnUiThread(() -> {
-            // Show refreshing state immediately
-            statusTextView.setText("Status: Refreshing...");
-            statusTextView.setTextColor(Color.GRAY);
-            statusTextView.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0);
+        // Show refreshing state immediately
+        statusTextView.setText("Status: Refreshing...");
+        statusTextView.setTextColor(Color.GRAY);
+        statusTextView.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0);
 
-            try {
-                // 1. Get fresh data with timestamp
-                SharedPreferences prefs = getSharedPreferences("GeofencePrefs", MODE_PRIVATE);
-                String checkInTime = prefs.getString("checkInTime", "N/A");
-                String checkOutTime = prefs.getString("checkOutTime", "N/A");
-                String lastUpdateTime = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
+        String lastUpdateTime = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
+        lastUpdateTextView.setText(String.format("Last update: %s", lastUpdateTime));
 
-                // 2. Update TextViews with timestamp
-                checkInTimeTextView.setText(String.format("Check-in: %s", checkInTime));
-                checkOutTimeTextView.setText(String.format("Check-out: %s", checkOutTime));
+        // Fetch data from Room database
+        executor.execute(() -> {
+            AppDatabase db = AppDatabase.getInstance(MainActivity.this);
+            AttendanceDao dao = db.attendanceDao();
 
-                // 3. Determine current status
-                if (checkInTime.equals("N/A")) {
-                    // Case 1: Outside geofence
-                    statusTextView.setText("Outside office area");
-                    statusTextView.setTextColor(Color.RED);
-                    statusTextView.setCompoundDrawablesWithIntrinsicBounds(
-                            R.drawable.ic_location_off, 0, 0, 0);
-                }
-                else if (!checkOutTime.equals("N/A")) {
-                    // Case 2: Previous session
-                    try {
-                        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
-                        Date checkInDate = format.parse(checkInTime);
-                        Date checkOutDate = format.parse(checkOutTime);
+            // Get active record and last session
+            AttendanceRecord activeRecord = dao.getActiveRecord();
+            List<AttendanceRecord> allRecords = dao.getAllRecords();
+            AttendanceRecord lastRecord = allRecords.isEmpty() ? null : allRecords.get(0);
 
-                        long duration = checkOutDate.getTime() - checkInDate.getTime();
-                        String durationText = String.format(Locale.getDefault(),
-                                "%dh %02dm",
-                                TimeUnit.MILLISECONDS.toHours(duration),
-                                TimeUnit.MILLISECONDS.toMinutes(duration) % 60);
+            runOnUiThread(() -> {
+                try {
+                    if (activeRecord != null) {
+                        // Currently checked in
+                        checkInTimeTextView.setText(String.format("Check-in: %s", activeRecord.checkInTime));
+                        checkOutTimeTextView.setText("Check-out: -");
 
-                        statusTextView.setText(String.format("Last session: %s", durationText));
-                        statusTextView.setTextColor(Color.BLUE);
-                        statusTextView.setCompoundDrawablesWithIntrinsicBounds(
-                                R.drawable.ic_history, 0, 0, 0);
-                    } catch (ParseException e) {
-                        statusTextView.setText("Session recorded");
-                        statusTextView.setTextColor(Color.BLUE);
-                    }
-                }
-                else {
-                    // Case 3: Currently checked in
-                    boolean isWifiValid = WifiValidator.isConnectedToOfficeWifi(this);
-                    if (isWifiValid) {
-                        statusTextView.setText("In office (Verified)");
-                        statusTextView.setTextColor(Color.GREEN);
-                        statusTextView.setCompoundDrawablesWithIntrinsicBounds(
-                                R.drawable.ic_verified, 0, 0, 0);
+                        boolean isWifiValid = WifiValidator.isConnectedToOfficeWifi(MainActivity.this);
+                        if (isWifiValid) {
+                            statusTextView.setText("In office (Verified)");
+                            statusTextView.setTextColor(Color.GREEN);
+                            statusTextView.setCompoundDrawablesWithIntrinsicBounds(
+                                    R.drawable.ic_verified, 0, 0, 0);
+                        } else {
+                            statusTextView.setText("In office (Unverified)");
+                            statusTextView.setTextColor(ContextCompat.getColor(MainActivity.this, R.color.unverified_orange));
+                            statusTextView.setCompoundDrawablesWithIntrinsicBounds(
+                                    R.drawable.ic_warning, 0, 0, 0);
+                        }
+                    } else if (lastRecord != null && lastRecord.checkOutTime != null) {
+                        // Previous session
+                        checkInTimeTextView.setText(String.format("Check-in: %s", lastRecord.checkInTime));
+                        checkOutTimeTextView.setText(String.format("Check-out: %s", lastRecord.checkOutTime));
+
+                        try {
+                            SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+                            Date checkInDate = format.parse(lastRecord.checkInTime);
+                            Date checkOutDate = format.parse(lastRecord.checkOutTime);
+
+                            long duration = checkOutDate.getTime() - checkInDate.getTime();
+                            String durationText = String.format(Locale.getDefault(),
+                                    "%dh %02dm",
+                                    TimeUnit.MILLISECONDS.toHours(duration),
+                                    TimeUnit.MILLISECONDS.toMinutes(duration) % 60);
+
+                            statusTextView.setText(String.format("Last session: %s", durationText));
+                            statusTextView.setTextColor(Color.BLUE);
+                            statusTextView.setCompoundDrawablesWithIntrinsicBounds(
+                                    R.drawable.ic_history, 0, 0, 0);
+                        } catch (ParseException e) {
+                            statusTextView.setText("Session recorded");
+                            statusTextView.setTextColor(Color.BLUE);
+                        }
                     } else {
-                        statusTextView.setText("In office (Unverified)");
-                        statusTextView.setTextColor(ContextCompat.getColor(this, R.color.unverified_orange));
+                        // No session data
+                        checkInTimeTextView.setText("Check-in: N/A");
+                        checkOutTimeTextView.setText("Check-out: N/A");
+
+                        statusTextView.setText("Outside office area");
+                        statusTextView.setTextColor(Color.RED);
                         statusTextView.setCompoundDrawablesWithIntrinsicBounds(
-                                R.drawable.ic_warning, 0, 0, 0);
+                                R.drawable.ic_location_off, 0, 0, 0);
                     }
+                } catch (Exception e) {
+                    Log.e(TAG, "UI update failed", e);
+                    statusTextView.setText("Status update failed");
+                    statusTextView.setTextColor(Color.RED);
                 }
-
-                // 4. Add last update time
-                TextView lastUpdateView = findViewById(R.id.lastUpdateTextView);
-                if (lastUpdateView != null) {
-                    lastUpdateView.setText(String.format("Last update: %s", lastUpdateTime));
-                }
-
-            } catch (Exception e) {
-                Log.e(TAG, "UI update failed", e);
-                statusTextView.setText("Status update failed");
-                statusTextView.setTextColor(Color.RED);
-            }
+            });
         });
     }
 
@@ -420,7 +417,6 @@ public class MainActivity extends AppCompatActivity {
             Log.d(TAG, "Geofence already exists, skipping add.");
         }
 
-
         initMapOverlay();
         startLocationUpdates();
         updateUI();
@@ -436,9 +432,6 @@ public class MainActivity extends AppCompatActivity {
     private void stopLocationUpdates() {
         fusedLocationClient.removeLocationUpdates(locationCallback);
     }
-
-    // Rest of the existing methods (addGeofence, initMapOverlay, updateUI, etc.)
-    // ... [Keep all the existing methods from your previous code] ...
 
     @Override
     protected void onResume() {
@@ -463,8 +456,6 @@ public class MainActivity extends AppCompatActivity {
         }
         stopLocationUpdates();
     }
-
-
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
@@ -508,16 +499,19 @@ public class MainActivity extends AppCompatActivity {
                     );
 
                     if (results[0] <= GEOFENCE_RADIUS) {
-                        SharedPreferences prefs = getSharedPreferences("GeofencePrefs", MODE_PRIVATE);
-                        String checkInTime = prefs.getString("checkInTime", "N/A");
-                        String checkOutTime = prefs.getString("checkOutTime", "N/A");
+                        executor.execute(() -> {
+                            AppDatabase db = AppDatabase.getInstance(MainActivity.this);
+                            AttendanceDao dao = db.attendanceDao();
+                            AttendanceRecord activeRecord = dao.getActiveRecord();
 
-                        if (checkInTime.equals("N/A") || !checkOutTime.equals("N/A")) {
-                            // Trigger manual check-in
-                            Intent intent = new Intent(this, GeofenceBroadcastReceiver.class);
-                            intent.setAction("MANUAL_CHECK_IN");
-                            sendBroadcast(intent);
-                        }
+                            // Only trigger manual check-in if no active session
+                            if (activeRecord == null) {
+                                // Trigger manual check-in
+                                Intent intent = new Intent(MainActivity.this, GeofenceBroadcastReceiver.class);
+                                intent.setAction("MANUAL_CHECK_IN");
+                                sendBroadcast(intent);
+                            }
+                        });
                     }
                 }
             });

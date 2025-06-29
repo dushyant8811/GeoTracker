@@ -14,6 +14,7 @@
     <color name="default_outline">#BDBDBD</color>
     <color name="card_background">#FFFFFF</color>
     <color name="screen_background">#E3F2FD</color>
+    <color name="analytics_button">#EFE7A1</color>
 
     <!-- Add these toggle colors -->
     <color name="toggle_background">#F5F5F5</color>

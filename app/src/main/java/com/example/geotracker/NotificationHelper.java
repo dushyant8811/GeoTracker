@@ -6,7 +6,6 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.os.Build;
@@ -15,11 +14,15 @@ import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+
 public class NotificationHelper {
     public static final String CHANNEL_ID = "geofence_channel";
     public static final String CHANNEL_ID_HIGH = "geofence_high_priority";
     private static final int NOTIFICATION_ID = 1001;
     private static boolean channelsCreated = false;
+    private static final Executor executor = Executors.newSingleThreadExecutor();
 
     public static void createNotificationChannels(Context context) {
         if (channelsCreated || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
@@ -89,10 +92,16 @@ public class NotificationHelper {
     public static Notification getForegroundNotification(Context context) {
         createNotificationChannels(context);
 
-        // Get current check-in time for notification
-        SharedPreferences prefs = context.getSharedPreferences("GeofencePrefs", Context.MODE_PRIVATE);
-        String checkInTime = prefs.getString("checkInTime", "Active session");
+        // Create a placeholder notification immediately
+        Notification placeholder = createPlaceholderNotification(context);
 
+        // Start async query to get actual check-in time
+        updateNotificationWithDatabaseInfo(context);
+
+        return placeholder;
+    }
+
+    private static Notification createPlaceholderNotification(Context context) {
         // Create intent to open app when notification is tapped
         Intent intent = new Intent(context, MainActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -101,7 +110,7 @@ public class NotificationHelper {
 
         return new NotificationCompat.Builder(context, CHANNEL_ID)
                 .setContentTitle("GeoTracker Active")
-                .setContentText("Tracking since: " + checkInTime)
+                .setContentText("Starting session tracking...")
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setLargeIcon(BitmapFactory.decodeResource(context.getResources(), R.mipmap.ic_launcher))
                 .setContentIntent(pendingIntent)
@@ -109,5 +118,40 @@ public class NotificationHelper {
                 .setOnlyAlertOnce(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build();
+    }
+
+    private static void updateNotificationWithDatabaseInfo(Context context) {
+        executor.execute(() -> {
+            AppDatabase db = AppDatabase.getInstance(context);
+            AttendanceDao dao = db.attendanceDao();
+            AttendanceRecord activeRecord = dao.getActiveRecord();
+
+            String checkInTime = (activeRecord != null) ?
+                    "Tracking since: " + activeRecord.checkInTime :
+                    "Active session";
+
+            // Create updated notification
+            Intent intent = new Intent(context, MainActivity.class);
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            PendingIntent pendingIntent = PendingIntent.getActivity(
+                    context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+            Notification notification = new NotificationCompat.Builder(context, CHANNEL_ID)
+                    .setContentTitle("GeoTracker Active")
+                    .setContentText(checkInTime)
+                    .setSmallIcon(R.drawable.ic_launcher_foreground)
+                    .setLargeIcon(BitmapFactory.decodeResource(context.getResources(), R.mipmap.ic_launcher))
+                    .setContentIntent(pendingIntent)
+                    .setOngoing(true)
+                    .setOnlyAlertOnce(true)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .build();
+
+            // Update the notification
+            NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager != null) {
+                manager.notify(NOTIFICATION_ID, notification);
+            }
+        });
     }
 }
