@@ -9,6 +9,7 @@ import android.util.Log;
 
 import com.google.android.gms.location.Geofence;
 import com.google.android.gms.location.GeofencingEvent;
+import com.google.firebase.auth.FirebaseAuth;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -109,6 +110,7 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
                 // Create new record
                 String time = sdf.format(new Date());
                 AttendanceRecord record = new AttendanceRecord(OFFICE_NAME, time);
+                record.userId = FirebaseAuth.getInstance().getCurrentUser().getUid(); // Add user ID
                 dao.insert(record);
 
                 // Start foreground service
@@ -122,6 +124,9 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
                 NotificationHelper.sendNotification(context,
                         "Manual Check-In",
                         "You were already inside the geofence at " + time);
+
+                // Trigger sync after new check-in
+                new FirestoreSyncHelper().syncRecords(context);
             }
         });
     }
@@ -136,6 +141,7 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
             if (activeRecord == null) {
                 // Create new record
                 AttendanceRecord record = new AttendanceRecord(OFFICE_NAME, time);
+                record.userId = FirebaseAuth.getInstance().getCurrentUser().getUid(); // Add user ID
                 dao.insert(record);
 
                 // Start foreground service
@@ -149,6 +155,9 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
                 NotificationHelper.sendNotification(context,
                         "Geofence Entered",
                         "You entered the geofence at " + time);
+
+                // Trigger sync after new check-in
+                new FirestoreSyncHelper().syncRecords(context);
             }
         });
     }
@@ -162,6 +171,7 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
             AttendanceRecord activeRecord = dao.getActiveRecord();
             if (activeRecord != null) {
                 activeRecord.checkOutTime = time;
+                activeRecord.completed = true;
                 dao.update(activeRecord);
 
                 // Stop foreground service
@@ -171,6 +181,9 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
                 NotificationHelper.sendNotification(context,
                         "Geofence Exited",
                         "You exited the geofence at " + time);
+
+                // Trigger sync after check-out
+                new FirestoreSyncHelper().syncRecords(context);
             }
         });
     }

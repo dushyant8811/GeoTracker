@@ -131,6 +131,13 @@ public class MainActivity extends AppCompatActivity {
             startActivity(new Intent(MainActivity.this, AttendanceRecordsActivity.class));
         });
 
+        ImageButton syncButton = findViewById(R.id.syncButton);
+        syncButton.setOnClickListener(v -> {
+            v.animate().rotationBy(360).setDuration(1000).start();
+            new FirestoreSyncHelper().syncRecords(MainActivity.this);
+            Toast.makeText(this, "Syncing data...", Toast.LENGTH_SHORT).show();
+        });
+
         // Map setup
         mapView = findViewById(R.id.mapView);
         mapView.setTileSource(TileSourceFactory.MAPNIK);
@@ -141,6 +148,7 @@ public class MainActivity extends AppCompatActivity {
         // Location services setup
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
         geofencingClient = LocationServices.getGeofencingClient(this);
+
 
         createLocationRequest();
         createLocationCallback();
@@ -282,8 +290,8 @@ public class MainActivity extends AppCompatActivity {
 
             // Get active record and last session
             AttendanceRecord activeRecord = dao.getActiveRecord();
-            List<AttendanceRecord> allRecords = dao.getAllRecords();
-            AttendanceRecord lastRecord = allRecords.isEmpty() ? null : allRecords.get(0);
+            List<AttendanceRecord> completedRecords = dao.getCompletedRecords();
+            AttendanceRecord lastRecord = completedRecords.isEmpty() ? null : completedRecords.get(0);
 
             runOnUiThread(() -> {
                 try {
@@ -441,6 +449,8 @@ public class MainActivity extends AppCompatActivity {
             startLocationUpdates();
         }
         updateUI();
+
+        new FirestoreSyncHelper().syncRecords(this);
     }
 
     @Override

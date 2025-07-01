@@ -11,7 +11,7 @@ import androidx.core.app.ActivityCompat;
 public class WifiValidator {
     private static final String TAG = "WifiValidator";
     private static final String TARGET_SSID = "Poco";
-    private static final String TARGET_BSSID = "46:d3:3a:90:a1:d3";
+    private static final String TARGET_BSSID = "96:2f:85:c6:4a:86";
 
     public static boolean isConnectedToOfficeWifi(Context context) {
         if (!hasWifiPermissions(context)) {
