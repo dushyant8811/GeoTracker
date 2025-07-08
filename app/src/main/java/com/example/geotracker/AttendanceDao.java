@@ -21,4 +21,10 @@ public interface AttendanceDao {
     List<AttendanceRecord> getAllRecords();
 
 
+    @Query("SELECT * FROM attendance_records WHERE completed = 1 AND synced = 0")
+    List<AttendanceRecord> getUnsyncedCompletedRecords();
+
+    @Query("SELECT * FROM attendance_records WHERE completed = 1 ORDER BY id DESC")
+    List<AttendanceRecord> getCompletedRecords();
+
 }

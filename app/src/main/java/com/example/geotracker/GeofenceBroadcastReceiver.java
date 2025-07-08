@@ -3,12 +3,16 @@ package com.example.geotracker;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.os.Build;
 import android.util.Log;
 
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.WorkManager;
+
 import com.google.android.gms.location.Geofence;
 import com.google.android.gms.location.GeofencingEvent;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -21,7 +25,7 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
     private static final String TAG = "GeofenceReceiver";
     private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
     private final Executor executor = Executors.newSingleThreadExecutor();
-    private static final String OFFICE_NAME = "Headquarters"; // Default office name
+    private static final String OFFICE_NAME = "Headquarters";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -32,12 +36,9 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
             return;
         }
 
-        // Handle manual check-in first
         if ("MANUAL_CHECK_IN".equals(intent.getAction())) {
             if (!WifiValidator.isConnectedToOfficeWifi(context)) {
-                NotificationHelper.sendNotification(context,
-                        "Verification Failed",
-                        "Connect to office WiFi to check-in");
+                NotificationHelper.sendNotification(context, "Verification Failed", "Connect to office WiFi to check-in");
                 return;
             }
             handleManualCheckIn(context);
@@ -45,48 +46,27 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
         }
 
         GeofencingEvent event = GeofencingEvent.fromIntent(intent);
-        if (event == null) {
-            Log.e(TAG, "Null GeofencingEvent");
-            return;
-        }
-
-        if (event.hasError()) {
-            Log.e(TAG, "Geofencing error: " + event.getErrorCode());
+        if (event == null || event.hasError()) {
+            Log.e(TAG, "Geofencing error or null event: " + (event != null ? event.getErrorCode() : "null event"));
             return;
         }
 
         int transition = event.getGeofenceTransition();
         String time = sdf.format(new Date());
 
-        switch (transition) {
-            case Geofence.GEOFENCE_TRANSITION_ENTER:
-                // First verify Wi-Fi before any check-in processing
-                if (!WifiValidator.isConnectedToOfficeWifi(context)) {
-                    NotificationHelper.sendNotification(context,
-                            "Verification Failed",
-                            "Connect to office Wi-Fi to complete check-in");
-                    return; // Exit early if Wi-Fi validation fails
-                }
-
-                handleEnterTransition(context, time);
-                break;
-
-            case Geofence.GEOFENCE_TRANSITION_EXIT:
-                // Check Wi-Fi status on exit (for suspicious activity detection)
-                boolean stillOnOfficeWifi = WifiValidator.isConnectedToOfficeWifi(context);
-                handleExitTransition(context, time);
-
-                if (stillOnOfficeWifi) {
-                    NotificationHelper.sendNotification(context,
-                            "Attention Needed",
-                            "You left the geofence but are still on office Wi-Fi");
-                }
-                break;
-
-            default:
-                NotificationHelper.sendNotification(context,
-                        "Geofence Alert",
-                        "Unknown geofence transition detected at " + time);
+        if (transition == Geofence.GEOFENCE_TRANSITION_ENTER) {
+            if (!WifiValidator.isConnectedToOfficeWifi(context)) {
+                NotificationHelper.sendNotification(context, "Verification Failed", "Connect to office Wi-Fi to complete check-in");
+                return;
+            }
+            handleEnterTransition(context, time);
+        } else if (transition == Geofence.GEOFENCE_TRANSITION_EXIT) {
+            handleExitTransition(context, time);
+            if (WifiValidator.isConnectedToOfficeWifi(context)) {
+                NotificationHelper.sendNotification(context, "Attention Needed", "You left the geofence but are still on office Wi-Fi");
+            }
+        } else {
+            NotificationHelper.sendNotification(context, "Geofence Alert", "Unknown geofence transition detected at " + time);
         }
 
         sendUpdateUIBroadcast(context);
@@ -94,7 +74,7 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
 
     private void sendUpdateUIBroadcast(Context context) {
         Intent updateIntent = new Intent("com.example.geotracker.UPDATE_UI");
-        updateIntent.setPackage(context.getPackageName()); // Add this for Android 8+ compatibility
+        updateIntent.setPackage(context.getPackageName());
         context.sendBroadcast(updateIntent);
     }
 
@@ -103,25 +83,26 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
             AppDatabase db = AppDatabase.getInstance(context);
             AttendanceDao dao = db.attendanceDao();
 
-            // Check if there's an active session
-            AttendanceRecord activeRecord = dao.getActiveRecord();
-            if (activeRecord == null) {
-                // Create new record
+            if (dao.getActiveRecord() == null) {
                 String time = sdf.format(new Date());
                 AttendanceRecord record = new AttendanceRecord(OFFICE_NAME, time);
+
+                FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                if (user != null) {
+                    record.userId = user.getUid();
+                }
+
                 dao.insert(record);
 
-                // Start foreground service
                 Intent serviceIntent = new Intent(context, LocationForegroundService.class);
+                serviceIntent.setAction(LocationForegroundService.ACTION_START_TRACKING);
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(serviceIntent);
                 } else {
                     context.startService(serviceIntent);
                 }
 
-                NotificationHelper.sendNotification(context,
-                        "Manual Check-In",
-                        "You were already inside the geofence at " + time);
+                NotificationHelper.sendNotification(context, "Manual Check-In", "You were checked in at " + time);
             }
         });
     }
@@ -131,24 +112,22 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
             AppDatabase db = AppDatabase.getInstance(context);
             AttendanceDao dao = db.attendanceDao();
 
-            // Check if there's an active session
-            AttendanceRecord activeRecord = dao.getActiveRecord();
-            if (activeRecord == null) {
-                // Create new record
+            if (dao.getActiveRecord() == null) {
                 AttendanceRecord record = new AttendanceRecord(OFFICE_NAME, time);
+                FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                if (user != null) {
+                    record.userId = user.getUid();
+                }
                 dao.insert(record);
 
-                // Start foreground service
                 Intent startServiceIntent = new Intent(context, LocationForegroundService.class);
+                startServiceIntent.setAction(LocationForegroundService.ACTION_START_TRACKING);
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(startServiceIntent);
                 } else {
                     context.startService(startServiceIntent);
                 }
-
-                NotificationHelper.sendNotification(context,
-                        "Geofence Entered",
-                        "You entered the geofence at " + time);
+                NotificationHelper.sendNotification(context, "Geofence Entered", "You entered the geofence at " + time);
             }
         });
     }
@@ -158,19 +137,22 @@ public class GeofenceBroadcastReceiver extends BroadcastReceiver {
             AppDatabase db = AppDatabase.getInstance(context);
             AttendanceDao dao = db.attendanceDao();
 
-            // Get active session and close it
             AttendanceRecord activeRecord = dao.getActiveRecord();
             if (activeRecord != null) {
                 activeRecord.checkOutTime = time;
+                activeRecord.completed = true;
                 dao.update(activeRecord);
 
-                // Stop foreground service
                 Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
-                context.stopService(stopServiceIntent);
+                stopServiceIntent.setAction(LocationForegroundService.ACTION_STOP_TRACKING);
+                context.startService(stopServiceIntent);
 
-                NotificationHelper.sendNotification(context,
-                        "Geofence Exited",
-                        "You exited the geofence at " + time);
+                NotificationHelper.sendNotification(context, "Geofence Exited", "You exited the geofence at " + time);
+
+                // Trigger sync using WorkManager for reliability
+                Log.d(TAG, "Enqueuing SyncWorker to sync completed session.");
+                OneTimeWorkRequest syncWorkRequest = new OneTimeWorkRequest.Builder(SyncWorker.class).build();
+                WorkManager.getInstance(context).enqueue(syncWorkRequest);
             }
         });
     }

@@ -1,4 +1,5 @@
 package com.example.geotracker;
+
 import androidx.room.Entity;
 import androidx.room.PrimaryKey;
 import androidx.annotation.NonNull;
@@ -9,10 +10,13 @@ public class AttendanceRecord {
     public int id;
 
     @NonNull
-    public String officeName = "Headquarters"; // Default for testing
+    public String officeName = "Headquarters";
     public String checkInTime;
     public String checkOutTime;
-    public boolean synced = false; // For Firestore sync later
+    public boolean synced = false;
+    public String firestoreId;
+    public String userId;
+    public boolean completed = false;
 
     public AttendanceRecord(String officeName, String checkInTime) {
         if (officeName != null) this.officeName = officeName;

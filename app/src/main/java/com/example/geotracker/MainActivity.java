@@ -27,6 +27,8 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.WorkManager;
 
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.Geofence;
@@ -36,10 +38,8 @@ import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
-import com.google.firebase.FirebaseApp;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
-import com.google.firebase.firestore.FirebaseFirestore;
 
 import org.osmdroid.config.Configuration;
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
@@ -66,7 +66,6 @@ public class MainActivity extends AppCompatActivity {
     private static final float GEOFENCE_RADIUS = 150;
     private static final int REQUEST_FOREGROUND_LOCATION = 100;
     private static final int REQUEST_BACKGROUND_LOCATION = 101;
-    private static final int REQUEST_WIFI_PERMISSION = 102;
 
     // Location components
     private FusedLocationProviderClient fusedLocationClient;
@@ -74,6 +73,8 @@ public class MainActivity extends AppCompatActivity {
     private LocationCallback locationCallback;
 
     private GeofencingClient geofencingClient;
+    private PendingIntent geofencePendingIntent;
+
     private MapView mapView;
     private Marker userMarker;
     private Polygon geofenceCircle;
@@ -83,7 +84,6 @@ public class MainActivity extends AppCompatActivity {
     private TextView checkOutTimeTextView;
     private TextView lastUpdateTextView;
     private BroadcastReceiver geofenceUpdateReceiver;
-    private FirebaseFirestore db;
     private boolean isReceiverRegistered = false;
 
     private final Executor executor = Executors.newSingleThreadExecutor();
@@ -92,17 +92,12 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Check authentication - no FirebaseApp.initialize needed
-        FirebaseApp.initializeApp(this);
-
-        // Improved authentication check
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser == null) {
             startActivity(new Intent(this, LoginActivity.class));
             finish();
             return;
         }
-        // Check stored role
         SharedPreferences prefs = getSharedPreferences("UserPrefs", MODE_PRIVATE);
         String role = prefs.getString("user_role", "");
 
@@ -115,30 +110,33 @@ public class MainActivity extends AppCompatActivity {
         Configuration.getInstance().setUserAgentValue(getPackageName());
         setContentView(R.layout.activity_main);
 
-        // Initialize UI components
         statusTextView = findViewById(R.id.statusTextView);
         checkInTimeTextView = findViewById(R.id.checkInTimeTextView);
         checkOutTimeTextView = findViewById(R.id.checkOutTimeTextView);
         lastUpdateTextView = findViewById(R.id.lastUpdateTextView);
 
-        // Initialize and set up logout button
         Button btnLogout = findViewById(R.id.btnLogout);
         btnLogout.setOnClickListener(v -> showLogoutConfirmationDialog());
 
-        // for roomdb testing
         Button btnViewRecords = findViewById(R.id.btnViewRecords);
         btnViewRecords.setOnClickListener(v -> {
             startActivity(new Intent(MainActivity.this, AttendanceRecordsActivity.class));
         });
 
-        // Map setup
+        ImageButton syncButton = findViewById(R.id.syncButton);
+        syncButton.setOnClickListener(v -> {
+            v.animate().rotationBy(360).setDuration(1000).start();
+            OneTimeWorkRequest syncWorkRequest = new OneTimeWorkRequest.Builder(SyncWorker.class).build();
+            WorkManager.getInstance(MainActivity.this).enqueue(syncWorkRequest);
+            Toast.makeText(this, "Syncing data in background...", Toast.LENGTH_SHORT).show();
+        });
+
         mapView = findViewById(R.id.mapView);
         mapView.setTileSource(TileSourceFactory.MAPNIK);
         mapView.setMultiTouchControls(true);
         mapView.getController().setZoom(18.0);
         mapView.getController().setCenter(new GeoPoint(GEOFENCE_LAT, GEOFENCE_LON));
 
-        // Location services setup
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
         geofencingClient = LocationServices.getGeofencingClient(this);
 
@@ -158,8 +156,28 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void performLogout() {
+        Log.d(TAG, "Logout initiated. Cleaning up session...");
+
+        Intent stopServiceIntent = new Intent(this, LocationForegroundService.class);
+        stopServiceIntent.setAction(LocationForegroundService.ACTION_STOP_TRACKING);
+        startService(stopServiceIntent);
+        Log.d(TAG, "Sent stop command to LocationForegroundService.");
+
+        geofencingClient.removeGeofences(getGeofencePendingIntent())
+                .addOnSuccessListener(aVoid -> Log.d(TAG, "Geofences removed successfully."))
+                .addOnFailureListener(e -> Log.e(TAG, "Failed to remove geofences.", e));
+
+        SharedPreferences userPrefs = getSharedPreferences("UserPrefs", MODE_PRIVATE);
+        userPrefs.edit().clear().apply();
+        SharedPreferences geofencePrefs = getSharedPreferences("SavedGeofences", MODE_PRIVATE);
+        geofencePrefs.edit().clear().apply();
+        Log.d(TAG, "Cleared user and geofence preferences.");
+
         FirebaseAuth.getInstance().signOut();
-        startActivity(new Intent(this, LoginActivity.class));
+
+        Intent intent = new Intent(this, LoginActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(intent);
         finish();
         overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
     }
@@ -167,27 +185,30 @@ public class MainActivity extends AppCompatActivity {
     private void setupRefreshButton() {
         ImageButton refreshButton = findViewById(R.id.refreshButton);
         refreshButton.setOnClickListener(v -> {
-            // Start rotation animation
             Animation rotateAnim = AnimationUtils.loadAnimation(this, R.anim.rotate_once);
             v.startAnimation(rotateAnim);
-
-            // Update UI after animation completes
             rotateAnim.setAnimationListener(new Animation.AnimationListener() {
-                @Override
-                public void onAnimationStart(Animation animation) {
-                    v.setEnabled(false);
-                }
-
-                @Override
-                public void onAnimationEnd(Animation animation) {
+                @Override public void onAnimationStart(Animation animation) { v.setEnabled(false); }
+                @Override public void onAnimationEnd(Animation animation) {
                     v.setEnabled(true);
                     updateUI();
                 }
-
-                @Override
-                public void onAnimationRepeat(Animation animation) {}
+                @Override public void onAnimationRepeat(Animation animation) {}
             });
         });
+    }
+
+    private PendingIntent getGeofencePendingIntent() {
+        if (geofencePendingIntent != null) {
+            return geofencePendingIntent;
+        }
+        Intent intent = new Intent(this, GeofenceBroadcastReceiver.class);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            flags |= PendingIntent.FLAG_MUTABLE;
+        }
+        geofencePendingIntent = PendingIntent.getBroadcast(this, 0, intent, flags);
+        return geofencePendingIntent;
     }
 
     private void addGeofence() {
@@ -203,23 +224,16 @@ public class MainActivity extends AppCompatActivity {
                 .addGeofence(geofence)
                 .build();
 
-        PendingIntent pendingIntent = PendingIntent.getBroadcast(
-                this, 0,
-                new Intent(this, GeofenceBroadcastReceiver.class),
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE
-        );
-
         if (GeofenceHelper.isGeofenceAlreadyAdded(this)) {
             Log.d(TAG, "Geofence already exists, skipping add.");
             return;
         }
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            geofencingClient.addGeofences(request, pendingIntent)
+            geofencingClient.addGeofences(request, getGeofencePendingIntent())
                     .addOnSuccessListener(aVoid -> {
-                        GeofenceHelper.saveGeofenceToPrefs(this, GEOFENCE_ID,
-                                (float) GEOFENCE_LAT, (float) GEOFENCE_LON, GEOFENCE_RADIUS);
-                        Log.d(TAG, "Geofence added silently");
+                        GeofenceHelper.saveGeofenceToPrefs(this, GEOFENCE_ID, (float) GEOFENCE_LAT, (float) GEOFENCE_LON, GEOFENCE_RADIUS);
+                        Log.d(TAG, "Geofence added successfully.");
                     })
                     .addOnFailureListener(e -> {
                         Log.e(TAG, "Geofence addition failed", e);
@@ -267,7 +281,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateUI() {
-        // Show refreshing state immediately
         statusTextView.setText("Status: Refreshing...");
         statusTextView.setTextColor(Color.GRAY);
         statusTextView.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0);
@@ -275,68 +288,50 @@ public class MainActivity extends AppCompatActivity {
         String lastUpdateTime = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
         lastUpdateTextView.setText(String.format("Last update: %s", lastUpdateTime));
 
-        // Fetch data from Room database
         executor.execute(() -> {
             AppDatabase db = AppDatabase.getInstance(MainActivity.this);
             AttendanceDao dao = db.attendanceDao();
-
-            // Get active record and last session
             AttendanceRecord activeRecord = dao.getActiveRecord();
-            List<AttendanceRecord> allRecords = dao.getAllRecords();
-            AttendanceRecord lastRecord = allRecords.isEmpty() ? null : allRecords.get(0);
+            List<AttendanceRecord> completedRecords = dao.getCompletedRecords();
+            AttendanceRecord lastRecord = completedRecords.isEmpty() ? null : completedRecords.get(0);
 
             runOnUiThread(() -> {
                 try {
                     if (activeRecord != null) {
-                        // Currently checked in
                         checkInTimeTextView.setText(String.format("Check-in: %s", activeRecord.checkInTime));
                         checkOutTimeTextView.setText("Check-out: -");
-
                         boolean isWifiValid = WifiValidator.isConnectedToOfficeWifi(MainActivity.this);
                         if (isWifiValid) {
                             statusTextView.setText("In office (Verified)");
                             statusTextView.setTextColor(Color.GREEN);
-                            statusTextView.setCompoundDrawablesWithIntrinsicBounds(
-                                    R.drawable.ic_verified, 0, 0, 0);
+                            setStatusIcon(R.drawable.ic_verified);
                         } else {
                             statusTextView.setText("In office (Unverified)");
                             statusTextView.setTextColor(ContextCompat.getColor(MainActivity.this, R.color.unverified_orange));
-                            statusTextView.setCompoundDrawablesWithIntrinsicBounds(
-                                    R.drawable.ic_warning, 0, 0, 0);
+                            setStatusIcon(R.drawable.ic_warning);
                         }
                     } else if (lastRecord != null && lastRecord.checkOutTime != null) {
-                        // Previous session
                         checkInTimeTextView.setText(String.format("Check-in: %s", lastRecord.checkInTime));
                         checkOutTimeTextView.setText(String.format("Check-out: %s", lastRecord.checkOutTime));
-
                         try {
                             SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
                             Date checkInDate = format.parse(lastRecord.checkInTime);
                             Date checkOutDate = format.parse(lastRecord.checkOutTime);
-
                             long duration = checkOutDate.getTime() - checkInDate.getTime();
-                            String durationText = String.format(Locale.getDefault(),
-                                    "%dh %02dm",
-                                    TimeUnit.MILLISECONDS.toHours(duration),
-                                    TimeUnit.MILLISECONDS.toMinutes(duration) % 60);
-
+                            String durationText = String.format(Locale.getDefault(), "%dh %02dm", TimeUnit.MILLISECONDS.toHours(duration), TimeUnit.MILLISECONDS.toMinutes(duration) % 60);
                             statusTextView.setText(String.format("Last session: %s", durationText));
                             statusTextView.setTextColor(Color.BLUE);
-                            statusTextView.setCompoundDrawablesWithIntrinsicBounds(
-                                    R.drawable.ic_history, 0, 0, 0);
+                            setStatusIcon(R.drawable.ic_history);
                         } catch (ParseException e) {
                             statusTextView.setText("Session recorded");
                             statusTextView.setTextColor(Color.BLUE);
                         }
                     } else {
-                        // No session data
                         checkInTimeTextView.setText("Check-in: N/A");
                         checkOutTimeTextView.setText("Check-out: N/A");
-
                         statusTextView.setText("Outside office area");
                         statusTextView.setTextColor(Color.RED);
-                        statusTextView.setCompoundDrawablesWithIntrinsicBounds(
-                                R.drawable.ic_location_off, 0, 0, 0);
+                        setStatusIcon(R.drawable.ic_location_off);
                     }
                 } catch (Exception e) {
                     Log.e(TAG, "UI update failed", e);
@@ -348,26 +343,21 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setStatusIcon(@DrawableRes int iconRes) {
-        Drawable icon = null;
-        if (iconRes != 0) {
-            icon = ContextCompat.getDrawable(this, iconRes);
-            icon.setBounds(0, 0, icon.getIntrinsicWidth(), icon.getIntrinsicHeight());
-        }
-        statusTextView.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, null, null, null);
+        Drawable icon = ContextCompat.getDrawable(this, iconRes);
+        statusTextView.setCompoundDrawablesWithIntrinsicBounds(icon, null, null, null);
     }
 
     private void createLocationRequest() {
         locationRequest = LocationRequest.create();
-        locationRequest.setInterval(10000); // Update interval 10 seconds
-        locationRequest.setFastestInterval(5000); // Fastest update interval 5 seconds
+        locationRequest.setInterval(10000);
+        locationRequest.setFastestInterval(5000);
         locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
     }
 
     private void createLocationCallback() {
         locationCallback = new LocationCallback() {
             @Override
-            public void onLocationResult(LocationResult locationResult) {
-                if (locationResult == null) return;
+            public void onLocationResult(@NonNull LocationResult locationResult) {
                 for (Location location : locationResult.getLocations()) {
                     updateUserLocation(location);
                 }
@@ -377,33 +367,24 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateUserLocation(Location location) {
         GeoPoint currentPoint = new GeoPoint(location.getLatitude(), location.getLongitude());
-        userMarker.setPosition(currentPoint);
-        mapView.getController().animateTo(currentPoint);
-        mapView.invalidate();
+        if (userMarker != null) {
+            userMarker.setPosition(currentPoint);
+            mapView.getController().animateTo(currentPoint);
+            mapView.invalidate();
+        }
     }
 
     private void checkPermissionsAndStart() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED ||
-                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_WIFI_STATE) != PackageManager.PERMISSION_GRANTED) {
-
-            ActivityCompat.requestPermissions(this,
-                    new String[]{
-                            Manifest.permission.ACCESS_FINE_LOCATION,
-                            Manifest.permission.ACCESS_WIFI_STATE
-                    },
-                    REQUEST_FOREGROUND_LOCATION);
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQUEST_FOREGROUND_LOCATION);
         } else {
             handlePostPermissionSetup();
         }
     }
 
     private void handlePostPermissionSetup() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-                        != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION},
-                    REQUEST_BACKGROUND_LOCATION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, REQUEST_BACKGROUND_LOCATION);
         } else {
             startAppFeatures();
             checkInitialState();
@@ -414,33 +395,33 @@ public class MainActivity extends AppCompatActivity {
         if (!GeofenceHelper.isGeofenceAlreadyAdded(this)) {
             addGeofence();
         } else {
-            Log.d(TAG, "Geofence already exists, skipping add.");
+            new GeofenceHelper(this).reRegisterGeofences();
         }
-
         initMapOverlay();
         startLocationUpdates();
         updateUI();
     }
 
     private void startLocationUpdates() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, null);
         }
     }
 
     private void stopLocationUpdates() {
-        fusedLocationClient.removeLocationUpdates(locationCallback);
+        if (fusedLocationClient != null && locationCallback != null) {
+            fusedLocationClient.removeLocationUpdates(locationCallback);
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         registerGeofenceUpdateReceiver();
-        if (locationCallback != null) {
-            startLocationUpdates();
-        }
+        startLocationUpdates();
         updateUI();
+        OneTimeWorkRequest syncWorkRequest = new OneTimeWorkRequest.Builder(SyncWorker.class).build();
+        WorkManager.getInstance(this).enqueue(syncWorkRequest);
     }
 
     @Override
@@ -460,53 +441,30 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-
         if (requestCode == REQUEST_FOREGROUND_LOCATION) {
-            boolean allGranted = true;
-            for (int result : grantResults) {
-                if (result != PackageManager.PERMISSION_GRANTED) {
-                    allGranted = false;
-                    break;
-                }
-            }
-
-            if (allGranted) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 handlePostPermissionSetup();
             } else {
-                Toast.makeText(this, "Location and WiFi permissions required", Toast.LENGTH_LONG).show();
-                // Optionally re-request permissions or show explanation
+                Toast.makeText(this, "Location permission is required.", Toast.LENGTH_LONG).show();
             }
         } else if (requestCode == REQUEST_BACKGROUND_LOCATION) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                startAppFeatures();
-            } else {
-                Toast.makeText(this, "Background location recommended for full functionality", Toast.LENGTH_LONG).show();
-                startAppFeatures(); // Still proceed without background location
+            startAppFeatures();
+            if (!(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED)) {
+                Toast.makeText(this, "Background location recommended for full functionality.", Toast.LENGTH_LONG).show();
             }
         }
     }
 
     private void checkInitialState() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED) {
-
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             fusedLocationClient.getLastLocation().addOnSuccessListener(location -> {
                 if (location != null) {
                     float[] results = new float[1];
-                    Location.distanceBetween(
-                            location.getLatitude(), location.getLongitude(),
-                            GEOFENCE_LAT, GEOFENCE_LON, results
-                    );
-
+                    Location.distanceBetween(location.getLatitude(), location.getLongitude(), GEOFENCE_LAT, GEOFENCE_LON, results);
                     if (results[0] <= GEOFENCE_RADIUS) {
                         executor.execute(() -> {
-                            AppDatabase db = AppDatabase.getInstance(MainActivity.this);
-                            AttendanceDao dao = db.attendanceDao();
-                            AttendanceRecord activeRecord = dao.getActiveRecord();
-
-                            // Only trigger manual check-in if no active session
+                            AttendanceRecord activeRecord = AppDatabase.getInstance(MainActivity.this).attendanceDao().getActiveRecord();
                             if (activeRecord == null) {
-                                // Trigger manual check-in
                                 Intent intent = new Intent(MainActivity.this, GeofenceBroadcastReceiver.class);
                                 intent.setAction("MANUAL_CHECK_IN");
                                 sendBroadcast(intent);
