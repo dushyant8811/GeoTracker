@@ -15,8 +15,6 @@ import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
-import com.google.firebase.auth.FirebaseAuth;
-
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -97,10 +95,8 @@ public class BootReceiver extends BroadcastReceiver {
                 if (activeRecord == null) {
                     // No active session - create new check-in
                     AttendanceRecord newRecord = new AttendanceRecord(OFFICE_NAME, currentTime);
-                    newRecord.userId = FirebaseAuth.getInstance().getCurrentUser().getUid(); // Add user ID
                     dao.insert(newRecord);
                     Log.d(TAG, "New check-in recorded after reboot");
-
                 }
 
                 // Start foreground service in all cases
@@ -126,8 +122,6 @@ public class BootReceiver extends BroadcastReceiver {
                     activeRecord.checkOutTime = currentTime;
                     dao.update(activeRecord);
                     Log.d(TAG, "Auto check-out recorded after reboot");
-
-                    new FirestoreSyncHelper().syncRecords(context);
 
                     // Stop foreground service
                     Intent stopServiceIntent = new Intent(context, LocationForegroundService.class);
@@ -183,7 +177,6 @@ public class BootReceiver extends BroadcastReceiver {
                 AttendanceDao dao = db.attendanceDao();
 
                 activeRecord.checkOutTime = currentTime;
-                activeRecord.completed = true;
                 dao.update(activeRecord);
 
                 // Stop foreground service
